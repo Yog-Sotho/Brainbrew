@@ -7,8 +7,19 @@
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
     <img src="https://img.shields.io/badge/Python-3.12+-blue.svg" alt="Python 3.12+">
     <img src="https://img.shields.io/badge/Docker-Ready-blue.svg" alt="Docker Ready">
+    <img src="https://img.shields.io/badge/for_non-tech_users-8A2BE2.svg" alt="For non-tech users">
     <img src="https://img.shields.io/badge/distilabel-Powered-purple.svg" alt="distilabel Powered">
+    <img src="https://img.shields.io/badge/Streamlit-Powered-FF4B4B.svg" alt="Streamlit Powered">
   </p>
+    <a href="https://github.com/codespaces/new?repo=Yog-Sotho/Brainbrew" target="_blank">
+    <img src="https://github.com/codespaces/badge.svg" alt="Open in Codespaces">
+</a>
+    <a href="https://github.com/Yog-Sotho/Brainbrew/stargazers" target="_blank">
+    <img src="https://img.shields.io/github/stars/Yog-Sotho/Brainbrew.svg" alt="GitHub Stars">
+</a>
+    <a href="https://github.com/sponsors/Yog-Sotho" target="_blank" rel="noopener">
+    <img src="https://img.shields.io/badge/Sponsor❤️-30363D.svg?logo=githubsponsors&logoColor=EA4AAA" alt="Sponsor on GitHub">
+  </a>
 </div>
 
 <hr>
