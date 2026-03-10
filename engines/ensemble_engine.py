@@ -1,24 +1,13 @@
-class EnsembleTeacher:
+from typing import List
+from .base import BaseEngine
 
-    def __init__(self, engines):
+class EnsembleTeacher(BaseEngine):
+    def __init__(self, engines: List[BaseEngine]):
         self.engines = engines
 
-    def generate(self, prompt):
+    def generate(self, prompt: str) -> str:
+        outputs = [e.generate(prompt) for e in self.engines if hasattr(e, "generate")]
+        return max(outputs, key=len) if outputs else ""
 
-        outputs = []
-
-        for engine in self.engines:
-
-            try:
-                out = engine.generate(prompt)
-                outputs.append(out)
-            except:
-                continue
-
-        if not outputs:
-            return ""
-
-        # choose longest answer as proxy for completeness
-        outputs.sort(key=len, reverse=True)
-
-        return outputs[0]
+    def generate_batch(self, prompts: List[str]) -> List[str]:
+        return [self.generate(p) for p in prompts]
