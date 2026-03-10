@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.jsonl
+models/
+trained_adapter/
+venv/
+.env
