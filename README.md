@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="images/brainbrew_logo.png" alt="Brainbrew Logo" width="420">
+  <img src="brainbrew_logo.png" alt="Brainbrew Logo" width="420">
   <h1>🧠 Brainbrew</h1>
   <p><strong>the ridiculously easy, stupidly powerful no-code machine that turns your boring PDFs and TXT files into god-tier synthetic LLM training data</strong></p>
   
