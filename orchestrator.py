@@ -1,40 +1,60 @@
+import tempfile
+from pathlib import Path
+from typing import Callable, Optional
+import os
+import structlog
+from distilabel.pipeline import Pipeline
+from distilabel.steps.tasks import EvolInstruct, TextGeneration
+from distilabel.steps import LoadDataFromDicts, FilterStep, KeepColumns
+from distilabel.llms import OpenAILLM, vLLM
+
 from config import DistillationConfig, QualityMode
-
-from pipeline.document_loader import load_document, chunk_text
-from pipeline.evol_instruct import evolve
-from pipeline.dataset_builder import build_with_vllm
-from pipeline.cleaners import clean_dataset
-from pipeline.evaluator import evaluate_dataset
+from pipeline.document_loader import semantic_chunk
 from pipeline.exporter import export_alpaca
-
-from engines.teacher_engine import TeacherEngine
-from engines.vllm_engine import VLLMEngine
-from engines.judge_engine import JudgeEngine
-from engines.ensemble_engine import EnsembleTeacher
-
 from training.lora_trainer import train_lora
 from publish.hf_publisher import publish_dataset
 
+logger = structlog.get_logger(__name__)
 
-def create_teacher(cfg):
+def run_distillation(cfg: DistillationConfig, source_file: Path, progress_callback: Optional[Callable[[int], None]] = None) -> Path:
+    logger.info("Starting distillation", config=cfg.model_dump(exclude_none=True))
 
-    models = [m.strip() for m in cfg.teacher_model.split(",")]
+    text = source_file.read_text(encoding="utf-8")
+    chunks = semantic_chunk(text)
+    prompts = [f"Explain the following concept from the document clearly and completely:\n\n{c}" for c in chunks][:cfg.dataset_size]
 
-    engines = []
-
-    for m in models:
+    with tempfile.TemporaryDirectory() as tmp:
+        raw_path = Path(tmp) / "raw.jsonl"
+        final_path = Path("alpaca_dataset.jsonl")
 
         if cfg.use_vllm:
-            engines.append(VLLMEngine(m))
+            llm = vLLM(model=cfg.teacher_model.split(",")[0], max_new_tokens=cfg.max_new_tokens, temperature=cfg.temperature)
         else:
-            engines.append(TeacherEngine(m))
+            llm = OpenAILLM(model=cfg.teacher_model.split(",")[0], api_key=cfg.api_key, max_new_tokens=cfg.max_new_tokens, temperature=cfg.temperature)
 
-    if len(engines) == 1:
-        return engines[0]
+        pipeline = Pipeline(steps=[
+            LoadDataFromDicts(data=[{"instruction": p} for p in prompts]),
+            EvolInstruct(llm=llm, num_evolutions=3 if cfg.quality_mode == QualityMode.RESEARCH else 2 if cfg.quality_mode == QualityMode.BALANCED else 1),
+            TextGeneration(llm=llm),
+            KeepColumns(columns=["instruction", "output"]),
+            FilterStep(condition="len(output) > 100"),
+        ])
 
-    return EnsembleTeacher(engines)
+        distiset = pipeline.run()
+        distiset["default"].to_json(str(raw_path))
+        export_alpaca(str(raw_path), str(final_path))
 
+        if cfg.train_model:
+            train_lora(str(final_path), cfg.base_model, "trained_adapter", cfg.lora_rank)
 
+        if cfg.publish_dataset and cfg.hf_repo:
+            publish_dataset(str(final_path), cfg.hf_repo, os.getenv("HF_TOKEN"))
+
+        if progress_callback:
+            progress_callback(100)
+
+        logger.info("Finished", path=str(final_path))
+        return final_path
 def run_distillation(cfg: DistillationConfig):
 
     text = load_document(cfg.source_file)
