@@ -1,23 +1,15 @@
 from vllm import LLM, SamplingParams
+from typing import List
+from .base import BaseEngine
 
-class VLLMEngine:
+class VLLMEngine(BaseEngine):
+    def __init__(self, model: str):
+        self.llm = LLM(model=model, gpu_memory_utilization=0.9)
+        self.params = SamplingParams(temperature=0.7, max_tokens=2048)
 
-    def __init__(self, model):
+    def generate(self, prompt: str) -> str:
+        return self.llm.generate([prompt], self.params)[0].outputs[0].text.strip()
 
-        self.llm = LLM(model=model)
-
-        self.params = SamplingParams(
-            temperature=0.7,
-            max_tokens=1024
-        )
-
-    def generate_batch(self, prompts):
-
+    def generate_batch(self, prompts: List[str]) -> List[str]:
         outputs = self.llm.generate(prompts, self.params)
-
-        results = []
-
-        for o in outputs:
-            results.append(o.outputs[0].text.strip())
-
-        return results
+        return [o.outputs[0].text.strip() for o in outputs]
