@@ -1,32 +1,31 @@
 from enum import Enum
-from pydantic import BaseModel
-
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional
 
 class QualityMode(str, Enum):
-    FAST="fast"
-    BALANCED="balanced"
-    RESEARCH="research"
-
+    FAST = "fast"
+    BALANCED = "balanced"
+    RESEARCH = "research"
 
 class DistillationConfig(BaseModel):
+    teacher_model: str = Field(..., description="Model name or comma-separated list")
+    judge_model: Optional[str] = "gpt-4o-mini"
+    dataset_size: int = Field(2000, ge=100, le=50000)
+    quality_mode: QualityMode = QualityMode.BALANCED
+    use_vllm: bool = True
+    train_model: bool = False
+    base_model: str = "unsloth/mistral-7b-bnb-4bit"
+    publish_dataset: bool = False
+    hf_repo: Optional[str] = None
+    temperature: float = Field(0.7, ge=0.0, le=2.0)
+    max_new_tokens: int = Field(2048, ge=128)
+    batch_size: int = Field(64, ge=1)
+    lora_rank: int = Field(16, ge=8)
+    api_key: Optional[str] = None
 
-    teacher_model:str
-    judge_model:str|None=None
-
-    dataset_size:int=2000
-    quality_mode:QualityMode=QualityMode.BALANCED
-
-    source_file:str="input.txt"
-
-    raw_dataset:str="dataset_raw.jsonl"
-    clean_dataset:str="dataset_clean.jsonl"
-    scored_dataset:str="dataset_scored.jsonl"
-    final_dataset:str="alpaca_dataset.jsonl"
-
-    use_vllm:bool=True
-
-    train_model:bool=False
-    base_model:str="unsloth/mistral-7b-bnb-4bit"
-
-    publish_dataset:bool=False
-    hf_repo:str|None=None
+    @field_validator("teacher_model")
+    @classmethod
+    def validate_teacher(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Teacher model is required")
+        return v.strip()
