@@ -7,8 +7,18 @@ class QualityMode(str, Enum):
     BALANCED = "balanced"
     RESEARCH = "research"
 
+# Display names shown in the UI — friendly labels map to the internal QualityMode values
+QUALITY_MODE_LABELS: dict[str, str] = {
+    QualityMode.FAST:     "☕ Quick Coffee Run",
+    QualityMode.BALANCED: "🍵 Good Daily Brew",
+    QualityMode.RESEARCH: "🔬 Premium Research Grade",
+}
+
 class DistillationConfig(BaseModel):
     teacher_model: str = Field(..., description="Model name or comma-separated list")
+    # NOTE: judge_model is reserved for future quality-scoring support.
+    # It is defined here so configs serialise/deserialise cleanly, but it is
+    # not yet wired into the pipeline. Do not pass it to any LLM call.
     judge_model: Optional[str] = "gpt-4o-mini"
     dataset_size: int = Field(2000, ge=100, le=50000)
     quality_mode: QualityMode = QualityMode.BALANCED
