@@ -6,10 +6,11 @@ Tests for orchestrator.py — run_distillation().
 All heavy dependencies are mocked. Tests verify orchestration logic,
 not the behaviour of distilabel/OpenAI internally.
 
-Covers:
+Covers (original + new):
   - Import smoke test (no NameError — regression guard for duplicate function)
   - Returns a Path pointing to alpaca_dataset.jsonl
   - api_key NEVER appears in any log call (S-01 security regression)
+  - FIX: progress_callback called at multiple real stages, not just 100
   - progress_callback called with 100 on success
   - progress_callback not required (None is safe)
   - OpenAILLM instantiated when use_vllm=False
@@ -19,11 +20,11 @@ Covers:
   - train_lora NOT called when train_model=False
   - publish_dataset called when publish_dataset=True and hf_repo set
   - publish_dataset NOT called when publish_dataset=False
-  - publish_dataset NOT called when hf_repo is None even if publish_dataset=True
+  - publish_dataset NOT called when hf_repo is None
   - pipeline.run() called exactly once
   - export_alpaca called once
-  - Missing source file raises an appropriate exception
-  - Empty source file raises an appropriate exception
+  - FIX: large source file raises ValueError
+  - Empty source file raises exception
   - QualityMode.FAST uses 1 evolution, BALANCED uses 2, RESEARCH uses 3
 """
 from __future__ import annotations
@@ -31,20 +32,17 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from config import DistillationConfig, QualityMode
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_distiset(tmp_path: Path) -> MagicMock:
-    """Mock distiset that writes a valid JSONL when to_json() is called."""
-    record = {"instruction": "Q?", "output": "Long enough answer to pass the length filter easily."}
+    record = {"instruction": "Q?", "output": "Long enough answer to pass the length filter."}
 
     def fake_to_json(path: str) -> None:
         Path(path).write_text(json.dumps(record) + "\n", encoding="utf-8")
@@ -86,19 +84,14 @@ def _run_with_mocks(cfg, source_file, progress_callback=None, tmp_path=None):
         }
 
 
-# ---------------------------------------------------------------------------
-# Smoke test
-# ---------------------------------------------------------------------------
+# ── Smoke test ────────────────────────────────────────────────────────────────
 
 def test_run_distillation_importable():
-    """Must import without NameError — regression guard for duplicate-function bug."""
     from orchestrator import run_distillation
     assert callable(run_distillation)
 
 
-# ---------------------------------------------------------------------------
-# Return value
-# ---------------------------------------------------------------------------
+# ── Return value ──────────────────────────────────────────────────────────────
 
 class TestReturnValue:
 
@@ -111,18 +104,14 @@ class TestReturnValue:
         assert result.name == "alpaca_dataset.jsonl"
 
 
-# ---------------------------------------------------------------------------
-# Security: api_key never logged (S-01 regression)
-# ---------------------------------------------------------------------------
+# ── Security: api_key never logged ───────────────────────────────────────────
 
 class TestApiKeyNeverLogged:
 
     def test_api_key_not_in_any_log_call(self, source_file, tmp_path):
         cfg = DistillationConfig(
-            teacher_model="gpt-4o",
-            use_vllm=False,
-            quality_mode=QualityMode.FAST,
-            dataset_size=100,
+            teacher_model="gpt-4o", use_vllm=False,
+            quality_mode=QualityMode.FAST, dataset_size=100,
             api_key="sk-this-must-never-appear-in-logs",
         )
         logged_args = []
@@ -148,17 +137,22 @@ class TestApiKeyNeverLogged:
             run_distillation(cfg, source_file)
 
         for msg, kwargs in logged_args:
-            full = str(msg) + str(kwargs)
-            assert "sk-this-must-never-appear-in-logs" not in full, (
-                f"API key leaked in log call: {full}"
-            )
+            assert "sk-this-must-never-appear-in-logs" not in str(msg) + str(kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Progress callback
-# ---------------------------------------------------------------------------
+# ── FIX: Real progress callbacks ─────────────────────────────────────────────
 
-class TestProgressCallback:
+class TestRealProgressCallbacks:
+
+    def test_callback_called_multiple_times(self, base_config, source_file, tmp_path):
+        """Progress bar must be called at real intermediate stages, not just at 100."""
+        calls = []
+        _run_with_mocks(base_config, source_file, progress_callback=lambda p: calls.append(p),
+                        tmp_path=tmp_path)
+        assert len(calls) > 1, (
+            f"Progress callback must be called multiple times (got {len(calls)}). "
+            "It was called only at the end — the 'fake progress bar' bug."
+        )
 
     def test_callback_called_with_100_on_success(self, base_config, source_file, tmp_path):
         calls = []
@@ -166,13 +160,28 @@ class TestProgressCallback:
                         tmp_path=tmp_path)
         assert 100 in calls
 
+    def test_progress_values_are_increasing(self, base_config, source_file, tmp_path):
+        """Progress values must never go backwards."""
+        calls = []
+        _run_with_mocks(base_config, source_file, progress_callback=lambda p: calls.append(p),
+                        tmp_path=tmp_path)
+        for i in range(1, len(calls)):
+            assert calls[i] >= calls[i - 1], (
+                f"Progress went backwards: {calls[i - 1]} → {calls[i]}"
+            )
+
+    def test_progress_values_between_0_and_100(self, base_config, source_file, tmp_path):
+        calls = []
+        _run_with_mocks(base_config, source_file, progress_callback=lambda p: calls.append(p),
+                        tmp_path=tmp_path)
+        for p in calls:
+            assert 0 <= p <= 100, f"Progress value out of range: {p}"
+
     def test_none_callback_does_not_raise(self, base_config, source_file, tmp_path):
         _run_with_mocks(base_config, source_file, progress_callback=None, tmp_path=tmp_path)
 
 
-# ---------------------------------------------------------------------------
-# LLM backend selection
-# ---------------------------------------------------------------------------
+# ── LLM backend selection ─────────────────────────────────────────────────────
 
 class TestLLMBackendSelection:
 
@@ -198,9 +207,7 @@ class TestLLMBackendSelection:
         assert kwargs.get("model") == "gpt-4o"
 
 
-# ---------------------------------------------------------------------------
-# Conditional steps
-# ---------------------------------------------------------------------------
+# ── Conditional steps ─────────────────────────────────────────────────────────
 
 class TestConditionalSteps:
 
@@ -216,14 +223,14 @@ class TestConditionalSteps:
         _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
         mocks["train_lora"].assert_not_called()
 
-    def test_publish_called_when_publish_true_and_hf_repo_set(self, source_file, tmp_path):
+    def test_publish_called_when_enabled_with_repo(self, source_file, tmp_path):
         cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
                                   quality_mode=QualityMode.FAST, dataset_size=100,
                                   publish_dataset=True, hf_repo="user/repo")
         _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
         mocks["publish_dataset"].assert_called_once()
 
-    def test_publish_not_called_when_publish_false(self, source_file, tmp_path):
+    def test_publish_not_called_when_disabled(self, source_file, tmp_path):
         cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
                                   quality_mode=QualityMode.FAST, dataset_size=100,
                                   publish_dataset=False, hf_repo="user/repo")
@@ -238,9 +245,7 @@ class TestConditionalSteps:
         mocks["publish_dataset"].assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Pipeline execution
-# ---------------------------------------------------------------------------
+# ── Pipeline execution ────────────────────────────────────────────────────────
 
 class TestPipelineExecution:
 
@@ -253,9 +258,7 @@ class TestPipelineExecution:
         mocks["export_alpaca"].assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Error conditions
-# ---------------------------------------------------------------------------
+# ── Error conditions ──────────────────────────────────────────────────────────
 
 class TestErrorConditions:
 
@@ -270,10 +273,17 @@ class TestErrorConditions:
         with pytest.raises(Exception):
             _run_with_mocks(base_config, empty, tmp_path=tmp_path)
 
+    def test_large_source_file_raises_valueerror(self, base_config, tmp_path):
+        """FIX: files over 100 MB must be rejected with a clear error, not a silent slowdown."""
+        from orchestrator import MAX_SOURCE_BYTES
+        huge = tmp_path / "huge.txt"
+        # write a file just over the limit
+        huge.write_bytes(b"x" * (MAX_SOURCE_BYTES + 1))
+        with pytest.raises(ValueError, match="exceeds"):
+            _run_with_mocks(base_config, huge, tmp_path=tmp_path)
 
-# ---------------------------------------------------------------------------
-# Parametrized: quality mode → num_evolutions
-# ---------------------------------------------------------------------------
+
+# ── Quality mode → num_evolutions ────────────────────────────────────────────
 
 @pytest.mark.parametrize("mode,expected_evolutions", [
     (QualityMode.FAST, 1),
@@ -302,7 +312,4 @@ def test_quality_mode_controls_num_evolutions(mode, expected_evolutions, source_
         run_distillation(cfg, source_file)
 
     _, kwargs = MockEvol.call_args
-    assert kwargs.get("num_evolutions") == expected_evolutions, (
-        f"QualityMode.{mode.name} should produce {expected_evolutions} evolutions, "
-        f"got {kwargs.get('num_evolutions')}"
-    )
+    assert kwargs.get("num_evolutions") == expected_evolutions
