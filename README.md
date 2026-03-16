@@ -28,7 +28,7 @@
 
 <p>We took the original prototype, <strong>slayed every bug</strong>, switched to production-grade distilabel magic, added semantic chunking, progress bars, Docker, and a bunch of other goodies… then wrapped it in a shiny Streamlit UI that even your grandma could use.</p>
 
-<p><strong>Current version: v1.0.0 Production-Ready</strong> 🔥</p>
+<p><strong>Current version: v1.2.0 Production-Ready</strong> 🔥</p>
 
 <div align="center">
   <img src="knowledge.png" alt="Knowledge inputs flowing into Brainbrew" width="480" style="margin: 20px 0;">
