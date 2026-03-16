@@ -30,6 +30,11 @@
 
 <p><strong>Current version: v1.0.0 Production-Ready</strong> 🔥</p>
 
+<div align="center">
+  <img src="knowledge.png" alt="Knowledge inputs flowing into Brainbrew" width="420" style="margin-bottom: 20px;">
+  <p><em>Drop in any knowledge — PDFs, text, books, docs — and let Brainbrew do the rest.</em></p>
+</div>
+
 <hr>
 
 <h2>🚀 Why Brainbrew Slaps</h2>
@@ -104,6 +109,11 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
 </ol>
 <p>Done. Go train a model that actually knows your niche.</p>
 
+<div align="center">
+  <img src="output.png" alt="Brainbrew output flowing into your model" width="480" style="margin: 20px 0;">
+  <p><em>High-quality Q&A pairs stream straight into your model's brain. Automated study, zero effort.</em></p>
+</div>
+
 <hr>
 
 <h2>⚙️ Advanced Settings (Sidebar)</h2>
@@ -176,6 +186,12 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
 <hr>
 
 <h2>🤝 Contributing</h2>
+
+<div align="center">
+  <img src="collaboration.png" alt="The Brainbrew community brewing together" width="480" style="margin: 20px 0;">
+  <p><em>Every great dataset starts with great contributors. Jump in — the cauldron is warm.</em></p>
+</div>
+  
 <p>Love it? Want to make it even cooler?</p>
 <ol>
   <li>Fork it</li>
