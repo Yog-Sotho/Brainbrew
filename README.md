@@ -31,7 +31,7 @@
 <p><strong>Current version: v1.0.0 Production-Ready</strong> 🔥</p>
 
 <div align="center">
-  <img src="knowledge.png" alt="Knowledge inputs flowing into Brainbrew" width="420" style="margin-bottom: 20px;">
+  <img src="knowledge.png" alt="Knowledge inputs flowing into Brainbrew" width="480" style="margin: 20px 0;">
   <p><em>Drop in any knowledge — PDFs, text, books, docs — and let Brainbrew do the rest.</em></p>
 </div>
 
@@ -39,7 +39,7 @@
 
 <h2>🚀 Why Brainbrew Slaps</h2>
 <ul>
-  <li><strong>Zero coding</strong> — literally just upload files and click “Generate Dataset”</li>
+  <li><strong>Zero coding</strong> — literally just upload files and click "Generate Dataset"</li>
   <li><strong>Distilabel-powered evolution</strong> — Evol-Instruct</li>
   <li><strong>Semantic chunking</strong> — your documents  get understood, not chopped like a bad haircut</li>
   <li><strong>vLLM or OpenAI</strong> — choose speed (GPU) or zero-setup (API)</li>
@@ -49,7 +49,7 @@
   <li><strong>Docker ready</strong> — run it anywhere without summoning the dependency demon</li>
 </ul>
 
-<p>In short: it’s what every AI guy <em>wanted</em> and never found anywhere.</p>
+<p>In short: it's what every AI guy <em>wanted</em> and never found anywhere.</p>
 
 <hr>
 
@@ -58,7 +58,7 @@
   <li><strong>Quality Modes</strong>: Fast (cheap & quick), Balanced (sweet spot), Research (maximum brain juice)</li>
   <li><strong>Smart Filtering</strong>: Automatic refusal cleaning + quality scoring</li>
   <li><strong>Export</strong>: Clean Alpaca-format <code>dataset.jsonl</code> ready for training</li>
-  <li><strong>Live Stats</strong>: See token counts and dataset health (if you’re into that nerd stuff)</li>
+  <li><strong>Live Stats</strong>: See token counts and dataset health (if you're into that nerd stuff)</li>
   <li><strong>Temp Files + Cleanup</strong>: No more leftover <code>input.txt</code> disasters</li>
   <li><strong>Full Logging</strong>: So you can flex on your friends with pretty terminal output</li>
   <li><strong>Pydantic Config</strong>: Type-safe everything (no more surprise crashes)</li>
@@ -72,20 +72,14 @@
 <pre><code>git clone https://github.com/YOURNAME/Brainbrew.git   # or your fork
 cd Brainbrew</code></pre>
 
-<h3>2. Install (Python 3.12+)</h3>
-<pre><code>pip install -r requirements.txt</code></pre>
+<h3>2. Install Everything (One Command, Zero Pain)</h3>
+<pre><code>bash install.sh</code></pre>
+<p>That's it. It handles Python check, virtualenv, all dependencies, GPU detection, and walks you through your API keys. No manual <code>.env</code> editing, no dependency hell, no crying.</p>
 
-<h3>3. Add Your Keys</h3>
-<pre><code>cp .env.example .env</code></pre>
-<p>Edit <code>.env</code>:</p>
-<pre><code>OPENAI_API_KEY=sk-...
-HF_TOKEN=hf_...
-HF_USERNAME=yourusername</code></pre>
-
-<h3>4. Run It</h3>
+<h3>3. Run It</h3>
 <pre><code>streamlit run app.py</code></pre>
 
-<p><strong>Boom.</strong> Browser opens. You’re now a dataset wizard.</p>
+<p><strong>Boom.</strong> Browser opens. You're now a dataset wizard.</p>
 
 <hr>
 
@@ -97,13 +91,13 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
 
 <hr>
 
-<h2>🎮 How to Use (So Easy It’s Embarrassing)</h2>
+<h2>🎮 How to Use (So Easy It's Embarrassing)</h2>
 <ol>
   <li>Upload your PDFs or TXT files (multiple OK!)</li>
   <li>Pick your teacher model (GPT-4o for no GPU, or Llama-3.1-8B for vLLM speed)</li>
   <li>Choose quality mode</li>
   <li>Slide to desired dataset size</li>
-  <li>Optional: tick “Auto-train LoRA” and/or “Publish to HF”</li>
+  <li>Optional: tick "Auto-train LoRA" and/or "Publish to HF"</li>
   <li>Smash the big <strong>🚀 Generate Dataset</strong> button</li>
   <li>Watch the magic + download your <code>alpaca_dataset.jsonl</code></li>
 </ol>
@@ -121,7 +115,7 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
   <li><strong>Use vLLM</strong> → Lightning fast (needs ≥24 GB VRAM)</li>
   <li><strong>OpenAI API Key</strong> → fallback for laptop warriors</li>
   <li><strong>HF Token</strong> → for publishing</li>
-  <li>Everything else (temperature, LoRA rank, etc.) is smart-defaulted but tweakable in code if you’re fancy</li>
+  <li>Everything else (temperature, LoRA rank, etc.) is smart-defaulted but tweakable in code if you're fancy</li>
 </ul>
 
 <hr>
@@ -133,7 +127,7 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
   <li><strong>vLLM</strong> – GPU wizardry</li>
   <li><strong>Unsloth</strong> – fastest LoRA training on the planet</li>
   <li><strong>LangChain text splitters</strong> – semantic chunking</li>
-  <li><strong>Pydantic + Structlog</strong> – no more “it worked on my machine” excuses</li>
+  <li><strong>Pydantic + Structlog</strong> – no more "it worked on my machine" excuses</li>
 </ul>
 
 <hr>
@@ -176,12 +170,12 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
 
 <h2>🐛 Troubleshooting (The Funny Edition)</h2>
 <ul>
-  <li><strong>“CUDA out of memory”</strong> → Turn off vLLM or use smaller model</li>
+  <li><strong>"CUDA out of memory"</strong> → Turn off vLLM or use smaller model</li>
   <li><strong>OpenAI rate limit</strong> → Chill, use smaller batch or wait</li>
   <li><strong>Nothing happens</strong> → Check console + make sure you uploaded files</li>
   <li><strong>HF publish fails</strong> → Token wrong? Repo name taken? Classic.</li>
 </ul>
-<p>Still stuck? Open an issue. I (or the original author) will roast the bug with you.</p>
+<p>Still stuck? Open an issue. I will roast the bug with you.</p>
 
 <hr>
 
@@ -191,12 +185,11 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
   <img src="collaboration.png" alt="The Brainbrew community brewing together" width="480" style="margin: 20px 0;">
   <p><em>Every great dataset starts with great contributors. Jump in — the cauldron is warm.</em></p>
 </div>
-  
+
 <p>Love it? Want to make it even cooler?</p>
 <ol>
   <li>Fork it</li>
   <li>Make changes (we love clean PRs)</li>
-  <li>Add tests? (we don’t have any yet — first contributor gets legendary status)</li>
   <li>Submit PR</li>
 </ol>
 <p>Ideas welcome: RAG retrieval, multi-modal support, cost estimator, web UI for cloud, etc.</p>
@@ -204,7 +197,7 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
 <hr>
 
 <h2>📜 License</h2>
-<p>MIT — do whatever you want. Just don’t blame us if your model becomes too powerful and takes over the world.</p>
+<p>MIT — do whatever you want. Just don't blame us if your model becomes too powerful and takes over the world.</p>
 
 <div align="center" style="margin-top: 50px;">
   <img src="brainbrew_logo.png" alt="Brainbrew Logo" width="280">
