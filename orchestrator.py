@@ -5,8 +5,8 @@ import os
 import structlog
 from distilabel.pipeline import Pipeline
 from distilabel.steps.tasks import EvolInstruct, TextGeneration
-from distilabel.steps import LoadDataFromDicts, KeepColumns
-from distilabel.steps.filtering import FilterRows
+from distilabel.steps import LoadDataFromDicts, KeepColumns, RenameColumns
+from distilabel.steps.filtering import FilterByCustom
 from distilabel.llms import OpenAILLM, vLLM
 
 from config import DistillationConfig, QualityMode
@@ -70,7 +70,7 @@ def run_distillation(cfg: DistillationConfig, source_file: Path, progress_callba
             RenameColumns(rename_mappings={"generation": "output"}),
             KeepColumns(columns=["instruction", "output"]),
             # FIX: filter on 'output' (now correctly renamed from 'generation')
-            FilterRows(filter_func=lambda row: len(row.get("output", "")) > 100),
+            FilterByCustom(func=lambda row: len(row.get("output", "")) > 100),
         ])
 
         # ── Stage 4: run pipeline — the long one (20 → 70%) ──────────────────
