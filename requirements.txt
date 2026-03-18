@@ -1,0 +1,19 @@
+streamlit==1.42.0
+pydantic==2.10.6
+openai
+pdfminer.six==20240706
+python-dotenv==1.0.1
+tenacity==9.0.0
+tqdm==4.67.1
+pandas==2.2.3
+numpy==2.2.1
+tiktoken==0.8.0
+datasets==3.2.0
+huggingface_hub==0.28.1
+# vllm / unsloth / distilabel commented out — use OpenAI mode on cloud (full GUI still works)
+#distilabel[openai,vllm]==1.5.2
+#vllm==0.6.6.post1
+#unsloth==2024.12.7
+#trl==0.12.2
+#transformers==4.48.0
+rich==13.9.4
