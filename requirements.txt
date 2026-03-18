@@ -1,6 +1,6 @@
 streamlit==1.42.0
 pydantic==2.10.6
-openai
+openai>=1.60.0          # fixed pin — no 1.59.1 exists
 pdfminer.six==20240706
 python-dotenv==1.0.1
 tenacity==9.0.0
@@ -10,10 +10,16 @@ numpy==2.2.1
 tiktoken==0.8.0
 datasets==3.2.0
 huggingface_hub==0.28.1
-# vllm / unsloth / distilabel commented out — use OpenAI mode on cloud (full GUI still works)
-#distilabel[openai,vllm]==1.5.2
-#vllm==0.6.6.post1
-#unsloth==2024.12.7
-#trl==0.12.2
-#transformers==4.48.0
+langchain-text-splitters==0.3.6
+structlog==25.1.0       # ← this was missing!
 rich==13.9.4
+
+# Heavy packages disabled for free cloud (they need GPU + long build)
+# distilabel[openai]==1.5.2
+# vllm
+# unsloth
+# trl
+# transformers
+# accelerate
+# bitsandbytes
+# sentencepiece
