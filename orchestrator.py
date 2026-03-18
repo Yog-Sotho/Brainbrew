@@ -5,7 +5,8 @@ import os
 import structlog
 from distilabel.pipeline import Pipeline
 from distilabel.steps.tasks import EvolInstruct, TextGeneration
-from distilabel.steps import LoadDataFromDicts, KeepColumns, FilterRows, RenameColumns  # FIX: FilterStep→FilterRows; RenameColumns added for generation→output
+from distilabel.steps import LoadDataFromDicts, KeepColumns
+from distilabel.steps.filtering import FilterRows
 from distilabel.llms import OpenAILLM, vLLM
 
 from config import DistillationConfig, QualityMode
