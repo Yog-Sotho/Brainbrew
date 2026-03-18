@@ -1,3 +1,11 @@
+"""
+Brainbrew orchestrator — coordinates document loading, distilabel pipeline,
+optional LoRA training, and optional HF publishing.
+
+Heavy GPU imports (via lora_trainer) and optional HF imports (via hf_publisher)
+are deferred to inside their respective conditional blocks so this module is
+safely importable on CPU-only hosts like Streamlit Cloud.
+"""
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -12,8 +20,12 @@ from distilabel.llms import OpenAILLM, vLLM
 from config import DistillationConfig, QualityMode
 from pipeline.document_loader import semantic_chunk
 from pipeline.exporter import export_alpaca
-from training.lora_trainer import train_lora
-from publish.hf_publisher import publish_dataset
+
+# FIX: train_lora and publish_dataset are NOT imported at module level.
+# lora_trainer pulls in transformers/trl/unsloth which require CUDA and are
+# not available on Streamlit Cloud. Importing them here crashes the app on
+# startup even when the user never enables LoRA training.
+# Both are imported lazily inside their respective `if` blocks below.
 
 logger = structlog.get_logger(__name__)
 
@@ -21,9 +33,8 @@ MAX_SOURCE_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
 # ---------------------------------------------------------------------------
-# Custom step: rename 'generation' → 'output' and filter short rows.
-# distilabel 1.5.x has no built-in FilterRows or RenameColumns — this is the
-# correct pattern: subclass Step, declare inputs/outputs, implement process().
+# Custom distilabel Step: rename 'generation' -> 'output' and filter short rows.
+# distilabel 1.5.x has no built-in FilterRows or RenameColumns.
 # ---------------------------------------------------------------------------
 class FilterAndRenameOutputs(Step):
     """Rename the 'generation' column to 'output' and drop rows below min_length chars."""
@@ -62,11 +73,11 @@ def run_distillation(
         if progress_callback:
             progress_callback(min(pct, 100))
 
-    # ── Stage 1: load & chunk ────────────────────────────────────────────────
+    # -- Stage 1: load & chunk -----------------------------------------------
     source_bytes = source_file.stat().st_size
     if source_bytes > MAX_SOURCE_BYTES:
         raise ValueError(
-            f"Source file is {source_bytes / 1e6:.0f} MB — exceeds the 100 MB limit. "
+            f"Source file is {source_bytes / 1e6:.0f} MB -- exceeds the 100 MB limit. "
             "Split the document into smaller files and run multiple times."
         )
 
@@ -85,7 +96,7 @@ def run_distillation(
         raw_path = Path(tmp) / "raw.jsonl"
         final_path = Path("alpaca_dataset.jsonl")
 
-        # ── Stage 2: initialise LLM backend ─────────────────────────────────
+        # -- Stage 2: initialise LLM backend ---------------------------------
         if cfg.use_vllm:
             llm = vLLM(
                 model=cfg.teacher_model.split(",")[0],
@@ -101,9 +112,7 @@ def run_distillation(
             )
         _progress(20)
 
-        # ── Stage 3: build pipeline ──────────────────────────────────────────
-        # distilabel 1.5.x requires the context-manager pattern + >> chaining.
-        # Pipeline(steps=[...]) is NOT a valid API in 1.5.x.
+        # -- Stage 3: build pipeline -----------------------------------------
         num_evolutions = (
             3 if cfg.quality_mode == QualityMode.RESEARCH
             else 2 if cfg.quality_mode == QualityMode.BALANCED
@@ -116,37 +125,38 @@ def run_distillation(
                 batch_size=cfg.batch_size,
             )
             evol = EvolInstruct(llm=llm, num_evolutions=num_evolutions)
-            # TextGeneration reads 'evolved_instruction' after EvolInstruct
             gen = TextGeneration(
                 llm=llm,
                 input_mappings={"instruction": "evolved_instruction"},
             )
-            # Custom step: renames 'generation'→'output' and filters short rows
             filter_rename = FilterAndRenameOutputs(min_length=100)
             keep = KeepColumns(columns=["instruction", "output"])
 
             loader >> evol >> gen >> filter_rename >> keep
 
-        # ── Stage 4: run pipeline ────────────────────────────────────────────
+        # -- Stage 4: run pipeline -------------------------------------------
         logger.info("Running distilabel pipeline", prompts=len(prompts))
         distiset = pipeline.run(use_cache=False)
         _progress(70)
 
-        # ── Stage 5: export ──────────────────────────────────────────────────
-        # Distiset["default"] is a DatasetDict with a "train" split; call
-        # to_json on the Dataset, not the DatasetDict.
+        # -- Stage 5: export -------------------------------------------------
         distiset["default"]["train"].to_json(str(raw_path))
         export_alpaca(str(raw_path), str(final_path))
         logger.info("Dataset exported", path=str(final_path))
         _progress(80)
 
-        # ── Stage 6: optional LoRA training ─────────────────────────────────
+        # -- Stage 6: optional LoRA training ---------------------------------
         if cfg.train_model:
+            # FIX: lazy import -- only pulled in when user actually enables LoRA.
+            # Keeps transformers/trl/unsloth off the import graph at startup.
+            from training.lora_trainer import train_lora
             train_lora(str(final_path), cfg.base_model, "trained_adapter", cfg.lora_rank)
             _progress(92)
 
-        # ── Stage 7: optional HF publish ─────────────────────────────────────
+        # -- Stage 7: optional HF publish ------------------------------------
         if cfg.publish_dataset and cfg.hf_repo:
+            # FIX: lazy import for symmetry and to keep startup import graph minimal.
+            from publish.hf_publisher import publish_dataset
             publish_dataset(str(final_path), cfg.hf_repo, os.getenv("HF_TOKEN"))
             _progress(96)
 
