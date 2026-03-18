@@ -5,4 +5,4 @@ python-dotenv==1.0.1
 structlog==25.1.0
 langchain-core==0.3.83
 langchain-text-splitters==0.3.6
-distilabel[openai]
+distilabel==0.6.0
