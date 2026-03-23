@@ -2,21 +2,10 @@ from enum import Enum
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
-
 class QualityMode(str, Enum):
     FAST = "fast"
     BALANCED = "balanced"
     RESEARCH = "research"
-
-
-# FIX: app.py imports this dict for the selectbox display labels.
-# Was missing entirely from config.py — caused ImportError at startup.
-QUALITY_MODE_LABELS: dict[QualityMode, str] = {
-    QualityMode.FAST:     "Fast ⚡ (quick & cheap)",
-    QualityMode.BALANCED: "Balanced 🎯 (sweet spot)",
-    QualityMode.RESEARCH: "Research 🔬 (maximum quality)",
-}
-
 
 class DistillationConfig(BaseModel):
     teacher_model: str = Field(..., description="Model name or comma-separated list")

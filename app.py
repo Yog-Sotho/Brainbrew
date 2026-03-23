@@ -1,179 +1,340 @@
+"""
+Brainbrew - Production-grade synthetic dataset generator
+Main Streamlit application
+"""
 import streamlit as st
 import tempfile
 import os
-import re
-import json
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 import structlog
 
-from config import DistillationConfig, QualityMode, QUALITY_MODE_LABELS
+from config import DistillationConfig, QualityMode
 from orchestrator import run_distillation
 
+# Configure logging
 load_dotenv()
 structlog.configure(wrapper_class=structlog.make_filtering_bound_logger("INFO"))
 logger = structlog.get_logger(__name__)
 
+# Constants for validation
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_FILES = 10
+
+# Page configuration
 st.set_page_config(page_title="Brainbrew", page_icon="🧠", layout="wide")
-st.title("🧠 Brainbrew v1.1.0")
+st.title("🧠 Brainbrew v1.0")
 st.caption("Production-grade synthetic dataset generator")
 
-with st.sidebar:
-    st.header("⚙️ Advanced Settings")
-    use_vllm = st.checkbox("Use vLLM (GPU required)", value=True)
-    openai_key = st.text_input("OpenAI API Key", value=os.getenv("OPENAI_API_KEY", ""), type="password")
-    hf_token = st.text_input("Hugging Face Token", value=os.getenv("HF_TOKEN", ""), type="password")
 
-teacher_model = st.text_input("Teacher Model(s)", value="gpt-4o" if not use_vllm else "meta-llama/Meta-Llama-3.1-8B-Instruct")
+def validate_file_content(uploaded_file) -> Optional[str]:
+    """
+    Validate file content based on MIME type and actual content.
 
-# FIX: friendly quality mode display names instead of raw enum values
-quality_label = st.selectbox(
-    "Quality Mode",
-    options=list(QUALITY_MODE_LABELS.values()),
-    index=1,
-)
-# Map friendly label back to internal QualityMode value
-quality_mode = next(k.value for k, v in QUALITY_MODE_LABELS.items() if v == quality_label)
+    Args:
+        uploaded_file: Streamlit uploaded file object
 
-dataset_size = st.slider("Target Dataset Size", 500, 20000, 2000)
-train_model = st.checkbox("Auto-train LoRA adapter", value=False)
-publish = st.checkbox("Publish to Hugging Face", value=False)
+    Returns:
+        Extracted text content or None if validation fails
+    """
+    # Check file size
+    if uploaded_file.size > MAX_FILE_SIZE:
+        st.error(f"File {uploaded_file.name} exceeds maximum size of {MAX_FILE_SIZE // (1024*1024)}MB")
+        return None
 
-# FIX: editable HF repo name — was hardcoded, user had to edit the source code to change it
-hf_repo_name = None
-if publish:
-    default_repo = f"{os.getenv('HF_USERNAME', 'yourusername')}/brainbrew-dataset"
-    hf_repo_name = st.text_input("Hugging Face Repo", value=default_repo,
-                                  help="Format: username/repo-slug. Created as private if it does not exist.")
-
-uploaded_files = st.file_uploader("Upload documents (PDF/TXT)", type=["pdf", "txt"], accept_multiple_files=True)
-
-# FIX S-02: safe filename pattern to prevent path traversal
-_SAFE_FILENAME_RE = re.compile(r"^[\w\-. ]+$")
-
-# FIX: file-size warning — surface large uploads before the user waits 20 minutes
-MAX_WARN_BYTES = 10 * 1024 * 1024   # warn at 10 MB
-MAX_HARD_BYTES = 50 * 1024 * 1024   # hard limit at 50 MB per file
-if uploaded_files:
-    total_bytes = sum(getattr(f, "size", 0) or 0 for f in uploaded_files)
-    if total_bytes > MAX_WARN_BYTES:
-        st.warning(
-            f"⚠️ Total upload is **{total_bytes / 1e6:.1f} MB**. "
-            "Large documents produce more chunks and will take longer to process. "
-            "Consider splitting into smaller files for faster iteration."
-        )
-
-
-# ── Cost / time estimator ────────────────────────────────────────────────────
-
-def _estimate(model: str, size: int, mode: str, vllm: bool) -> tuple[str, str]:
-    """Return (cost_str, time_str) estimates shown before the user clicks Go."""
-    if vllm:
-        minutes = max(1, int(size * {"fast": 1, "balanced": 2, "research": 3}.get(mode, 2) * 0.3 / 60))
-        return "Free (local GPU)", f"~{minutes} min"
-    evolutions = {"fast": 1, "balanced": 2, "research": 3}.get(mode, 2)
-    # rough: ~800 tokens per pair × evolutions for generation + evolution passes
-    total_tokens = size * 800 * evolutions
-    if "mini" in model or "3.5" in model:
-        cost = total_tokens * 0.0000004   # ~$0.40/1M
-    else:
-        cost = total_tokens * 0.000010    # ~$10/1M (gpt-4o)
-    minutes = max(1, int(size * evolutions * 0.5 / 60))
-    return f"~${cost:.2f}", f"~{minutes} min"
-
-
-est_cost, est_time = _estimate(teacher_model, dataset_size, quality_mode, use_vllm)
-st.info(
-    f"💰 Estimated cost: **{est_cost}**  ·  ⏱️ Estimated time: **{est_time}**  "
-    f"·  📦 Up to **{dataset_size}** pairs  ·  Mode: **{quality_label}**"
-)
-
-if st.button("🚀 Generate Dataset", type="primary"):
-    if not uploaded_files:
-        st.error("Upload at least one document")
-        st.stop()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        source_path = Path(tmp) / "source.txt"
-        with open(source_path, "w", encoding="utf-8") as f:
-            for uploaded in uploaded_files:
-                # FIX S-02: validate filename before processing
-                if not _SAFE_FILENAME_RE.match(uploaded.name):
-                    st.warning(f"Skipped '{uploaded.name}' — unsafe filename.")
-                    continue
-                # FIX: hard file-size limit per file
-                if getattr(uploaded, "size", 0) > MAX_HARD_BYTES:
-                    st.warning(f"Skipped '{uploaded.name}' — exceeds 50 MB limit.")
-                    continue
-                # FIX: wrap PDF extraction in try/except so one bad file doesn't crash all
-                try:
-                    if uploaded.type == "application/pdf":
-                        from pdfminer.high_level import extract_text
-                        content = extract_text(uploaded)
-                    else:
-                        content = uploaded.read().decode("utf-8")
-                    f.write(content + "\n\n")
-                except Exception as e:
-                    st.warning(f"Could not parse '{uploaded.name}': {e} — skipping.")
-                    continue
-
-        cfg = DistillationConfig(
-            teacher_model=teacher_model,
-            quality_mode=QualityMode(quality_mode),
-            dataset_size=dataset_size,
-            use_vllm=use_vllm,
-            train_model=train_model,
-            publish_dataset=publish,
-            hf_repo=hf_repo_name if publish else None,
-            api_key=openai_key or os.getenv("OPENAI_API_KEY"),
-        )
-
-        # FIX: progress bar now reflects honest pipeline stages, not just 0→100 at the end
-        progress_bar = st.progress(0)
-        status = st.empty()
-
-        _STAGE_LABELS = {
-            5:  "📄 Reading document…",
-            15: "✂️  Chunking text…",
-            20: "🤖 Initialising model…",
-            70: "⚗️  Running pipeline… (this is the long part)",
-            80: "💾 Exporting dataset…",
-            92: "🎯 Training LoRA adapter…",
-            96: "🚀 Publishing to Hugging Face…",
-            100: "✅ Done!",
-        }
-
-        def _on_progress(pct: int) -> None:
-            progress_bar.progress(pct)
-            label = _STAGE_LABELS.get(pct, "")
-            if label:
-                status.caption(label)
+    # For PDF files, validate magic bytes
+    if uploaded_file.type == "application/pdf":
+        uploaded_file.seek(0)
+        header = uploaded_file.read(4)
+        if header != b'%PDF':
+            st.error(f"Invalid file format for {uploaded_file.name}: Not a valid PDF file")
+            return None
+        uploaded_file.seek(0)
 
         try:
-            final_path = run_distillation(cfg, source_path, _on_progress)
-            st.success("✅ Dataset generated!")
-            status.empty()
-
-            # ── FIX: Preview 5 examples before downloading ───────────────────
-            try:
-                with open(final_path, encoding="utf-8") as fh:
-                    preview_rows = [json.loads(line) for line in fh if line.strip()][:5]
-                if preview_rows:
-                    with st.expander("👀 Preview first 5 examples", expanded=True):
-                        for i, row in enumerate(preview_rows, 1):
-                            st.markdown(f"**Example {i}**")
-                            st.markdown(f"*Instruction:* {row['instruction']}")
-                            st.markdown(f"*Output:* {row['output'][:300]}{'…' if len(row['output']) > 300 else ''}")
-                            st.divider()
-            except Exception:
-                pass  # preview is best-effort — never block the download
-
-            st.download_button("📥 Download dataset.jsonl", open(final_path).read(), "dataset.jsonl")
-            if cfg.publish_dataset:
-                st.balloons()
+            from pdfminer.high_level import extract_text
+            content = extract_text(uploaded_file)
         except Exception as e:
-            logger.exception("Failed")
-            st.error(f"Generation failed: {e}")
-# FIX: removed the entire broken block that followed the except clause in the original:
-#   stray `publish_dataset=publish` token, unmatched `)`, and second run_distillation(cfg)
-#   call with wrong signature — all deleted.
+            st.error(f"Failed to extract text from {uploaded_file.name}: {e}")
+            return None
+
+        if not content or not content.strip():
+            st.error(f"File {uploaded_file.name} appears to be empty or contains no extractable text")
+            return None
+
+        return content
+
+    # For text files, validate encoding
+    elif uploaded_file.type == "text/plain":
+        try:
+            content = uploaded_file.read().decode("utf-8")
+        except UnicodeDecodeError:
+            st.error(f"Invalid encoding for {uploaded_file.name}. Please upload UTF-8 encoded files.")
+            return None
+        except Exception as e:
+            st.error(f"Failed to read {uploaded_file.name}: {e}")
+            return None
+
+        if not content or not content.strip():
+            st.error(f"File {uploaded_file.name} is empty")
+            return None
+
+        return content
+
+    # Unknown file type
+    else:
+        st.error(f"Unsupported file type: {uploaded_file.type} for file {uploaded_file.name}")
+        return None
+
+
+def get_api_key(use_vllm: bool) -> Optional[str]:
+    """
+    Get and validate API key based on mode.
+
+    Args:
+        use_vllm: Whether using vLLM (GPU) mode
+
+    Returns:
+        API key string or None
+    """
+    # Try to get from session state first, then environment
+    if "openai_key" in st.session_state and st.session_state.openai_key:
+        return st.session_state.openai_key
+
+    # Fall back to environment variable
+    return os.getenv("OPENAI_API_KEY") if not use_vllm else None
+
+
+def calculate_estimated_cost(dataset_size: int, quality_mode: str, use_vllm: bool) -> tuple[float, str]:
+    """
+    Estimate cost and time for dataset generation.
+
+    Args:
+        dataset_size: Number of samples to generate
+        quality_mode: Quality mode (fast, balanced, research)
+        use_vllm: Whether using vLLM
+
+    Returns:
+        Tuple of (estimated_cost_usd, estimated_time)
+    """
+    # Base cost estimates (rough approximations)
+    if use_vllm:
+        # vLLM is free but requires GPU
+        cost = 0.0
+        time_per_sample = 2  # seconds
+    else:
+        # OpenAI API costs
+        cost_per_1k = 0.03  # GPT-4o mini pricing
+        cost = (dataset_size * cost_per_1k) / 1000
+        time_per_sample = 1  # seconds
+
+    # Quality mode affects time
+    if quality_mode == "research":
+        time_multiplier = 3
+    elif quality_mode == "balanced":
+        time_multiplier = 2
+    else:
+        time_multiplier = 1
+
+    total_seconds = dataset_size * time_per_sample * time_multiplier
+
+    if total_seconds < 60:
+        time_str = f"{total_seconds} seconds"
+    elif total_seconds < 3600:
+        time_str = f"{total_seconds // 60} minutes"
+    else:
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        time_str = f"{hours}h {minutes}m"
+
+    return cost, time_str
+
+
+# Sidebar configuration
+with st.sidebar:
+    st.header("⚙️ Advanced Settings")
+
+    # Model selection
+    use_vllm = st.checkbox("Use vLLM (GPU required)", value=True)
+
+    # API key inputs
+    st.subheader("API Keys")
+    openai_key = st.text_input(
+        "OpenAI API Key",
+        value=os.getenv("OPENAI_API_KEY", ""),
+        type="password",
+        help="Required only if not using vLLM"
+    )
+    hf_token = st.text_input(
+        "Hugging Face Token",
+        value=os.getenv("HF_TOKEN", ""),
+        type="password",
+        help="Required for publishing to Hugging Face"
+    )
+
+    # Store in session state for persistence
+    st.session_state.openai_key = openai_key
+    st.session_state.hf_token = hf_token
+
+    # Model configuration
+    st.subheader("Model Configuration")
+    teacher_model = st.text_input(
+        "Teacher Model(s)",
+        value="gpt-4o" if not use_vllm else "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        help="Model to use for dataset generation"
+    )
+
+    # Quality settings
+    quality_mode = st.selectbox(
+        "Quality Mode",
+        [q.value for q in QualityMode],
+        index=1,
+        help="Higher quality = more processing time"
+    )
+
+    # Dataset size with cost estimation
+    dataset_size = st.slider(
+        "Target Dataset Size",
+        min_value=500,
+        max_value=20000,
+        value=2000,
+        step=500
+    )
+
+    # Show cost/time estimation
+    estimated_cost, estimated_time = calculate_estimated_cost(dataset_size, quality_mode, use_vllm)
+    if use_vllm:
+        st.info(f"⏱️ Estimated time: {estimated_time}")
+    else:
+        st.info(f"💰 Estimated cost: ${estimated_cost:.2f} | ⏱️ {estimated_time}")
+
+    # Training options
+    st.subheader("Training & Publishing")
+    train_model = st.checkbox(
+        "Auto-train LoRA adapter",
+        value=False,
+        help="Train a LoRA adapter after dataset generation"
+    )
+    publish = st.checkbox(
+        "Publish to Hugging Face",
+        value=False,
+        help="Automatically publish dataset to Hugging Face Hub"
+    )
+
+
+# Main area
+st.header("📄 Upload Documents")
+
+uploaded_files = st.file_uploader(
+    "Upload documents (PDF/TXT)",
+    type=["pdf", "txt"],
+    accept_multiple_files=True,
+    help=f"Maximum {MAX_FILES} files, {MAX_FILE_SIZE // (1024*1024)}MB per file"
+)
+
+# File validation display
+if uploaded_files:
+    if len(uploaded_files) > MAX_FILES:
+        st.error(f"Maximum {MAX_FILES} files allowed. Please remove {len(uploaded_files) - MAX_FILES} files.")
+        st.stop()
+
+    st.success(f"📎 {len(uploaded_files)} file(s) ready for processing")
+
+    # Show file details
+    with st.expander("View uploaded files"):
+        for uploaded in uploaded_files:
+            size_mb = uploaded.size / (1024 * 1024)
+            st.write(f"- {uploaded.name} ({size_mb:.2f} MB)")
+
+# Generate button
+if st.button("🚀 Generate Dataset", type="primary", disabled=not uploaded_files):
+    if not uploaded_files:
+        st.error("Please upload at least one document")
+        st.stop()
+
+    # Validate files before processing
+    valid_contents = []
+    for uploaded in uploaded_files:
+        content = validate_file_content(uploaded)
+        if content is None:
+            st.stop()
+        valid_contents.append(content)
+
+    # Combine all content
+    combined_content = "\n\n".join(valid_contents)
+
+    if not combined_content.strip():
+        st.error("No valid content extracted from uploaded files")
+        st.stop()
+
+    # Show processing status
+    with st.spinner("Processing documents..."):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "source.txt"
+            with open(source_path, "w", encoding="utf-8") as f:
+                f.write(combined_content)
+
+            # Build configuration
+            hf_username = os.getenv("HF_USERNAME", "yourusername")
+            hf_repo = f"{hf_username}/brainbrew-dataset" if publish else None
+
+            cfg = DistillationConfig(
+                teacher_model=teacher_model,
+                quality_mode=QualityMode(quality_mode),
+                dataset_size=dataset_size,
+                use_vllm=use_vllm,
+                train_model=train_model,
+                publish_dataset=publish,
+                hf_repo=hf_repo,
+                api_key=openai_key if not use_vllm else None,
+            )
+
+            # Run distillation with progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            try:
+                status_text.text("Initializing pipeline...")
+                progress_bar.progress(10)
+
+                final_path = run_distillation(
+                    cfg,
+                    source_path,
+                    lambda p: progress_bar.progress(min(p, 100))
+                )
+
+                progress_bar.progress(100)
+                status_text.text("Complete!")
+
+                st.success("✅ Dataset generated successfully!")
+
+                # Display download button
+                with open(final_path, "r", encoding="utf-8") as f:
+                    file_content = f.read()
+
+                st.download_button(
+                    "📥 Download dataset.jsonl",
+                    file_content,
+                    "dataset.jsonl",
+                    mime="application/json"
+                )
+
+                # Show balloons for successful publish
+                if cfg.publish_dataset:
+                    st.balloons()
+                    st.success(f"🚀 Dataset published to https://huggingface.co/{cfg.hf_repo}")
+
+            except ValueError as e:
+                logger.warning(f"Validation error: {e}")
+                st.error(f"Configuration error: {e}")
+            except RuntimeError as e:
+                logger.error(f"Runtime error: {e}")
+                st.error(f"Generation failed: {e}")
+            except Exception as e:
+                logger.exception("Unexpected error")
+                st.error(f"An unexpected error occurred: {e}")
+
+# Footer
+st.markdown("---")
+st.caption("🧠 Brainbrew v1.0 | Powered by distilabel, vLLM, and Unsloth")
