@@ -5,3 +5,4 @@ models/
 trained_adapter/
 venv/
 .env
+old/
