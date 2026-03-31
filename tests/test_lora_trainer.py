@@ -1,31 +1,16 @@
 """
 tests/test_lora_trainer.py
 
-Tests for training/lora_trainer.py — train_lora().
+Tests for training/lora_trainer.py — train_lora() and _format_alpaca().
 
 All GPU/ML dependencies (unsloth, trl, transformers, datasets) are mocked.
 No GPU required.
-
-Covers:
-  - train() called exactly once (regression for the duplicate-call fix)
-  - model.save_pretrained() called exactly once with correct output_dir
-  - trainer.model.save_pretrained() NOT called (was the removed duplicate)
-  - FIX: dataset.map() called with _format_alpaca (full instruction+output formatting)
-  - FIX: dataset_text_field is "text" not "output"
-  - FastLanguageModel.from_pretrained called with correct arguments
-  - SFTTrainer constructed with correct args
-  - load_dataset called with correct dataset_path
-  - lora_rank passed through to get_peft_config
-  - output_dir passed through to TrainingArguments
-  - fp16=True in TrainingArguments
-  - max_seq_length=2048 used consistently
-  - load_in_4bit=True (QLoRA)
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -91,21 +76,18 @@ class TestTrainCalledExactlyOnce:
 
     def test_trainer_train_called_once(self, dataset_file, output_dir, mock_model, mock_tokenizer):
         _, _, _, mock_trainer, *_ = _run(dataset_file, output_dir, mock_model, mock_tokenizer)
-        assert mock_trainer.train.call_count == 1, (
-            f"trainer.train() must be called exactly once, got {mock_trainer.train.call_count}"
-        )
+        assert mock_trainer.train.call_count == 1
 
     def test_trainer_model_save_pretrained_not_called(self, dataset_file, output_dir, mock_model, mock_tokenizer):
         _, _, _, mock_trainer, *_ = _run(dataset_file, output_dir, mock_model, mock_tokenizer)
         mock_trainer.model.save_pretrained.assert_not_called()
 
 
-# ── FIX: full instruction+output formatting ───────────────────────────────────
+# ── FIX C-03: full instruction+output formatting ─────────────────────────────
 
 class TestFullFormattingFix:
 
     def test_dataset_map_is_called(self, dataset_file, output_dir, mock_model, mock_tokenizer):
-        """dataset.map() must be called to apply _format_alpaca before training."""
         _, _, _, _, mock_ds, *_ = _run(dataset_file, output_dir, mock_model, mock_tokenizer)
         mock_ds.map.assert_called_once()
 
@@ -115,29 +97,24 @@ class TestFullFormattingFix:
         assert kwargs.get("batched") is True
 
     def test_dataset_text_field_is_text_not_output(self, dataset_file, output_dir, mock_model, mock_tokenizer):
-        """dataset_text_field must be 'text' (the formatted column), not 'output'."""
         _, MockSFT, *_ = _run(dataset_file, output_dir, mock_model, mock_tokenizer)
         _, kwargs = MockSFT.call_args
-        assert kwargs.get("dataset_text_field") == "text", (
-            "dataset_text_field must be 'text' after the formatting fix — was 'output'"
-        )
+        assert kwargs.get("dataset_text_field") == "text"
 
     def test_format_alpaca_without_input(self):
-        """_format_alpaca must include instruction in the formatted text."""
         from training.lora_trainer import _format_alpaca
         result = _format_alpaca(
             {"instruction": ["What is AI?"], "input": [""], "output": ["AI is cool."]},
             eos_token="</s>",
         )
         text = result["text"][0]
-        assert "What is AI?" in text, "Instruction must appear in formatted text"
-        assert "AI is cool." in text, "Output must appear in formatted text"
+        assert "What is AI?" in text
+        assert "AI is cool." in text
         assert "### Instruction:" in text
         assert "### Response:" in text
         assert "</s>" in text
 
     def test_format_alpaca_with_input(self):
-        """_format_alpaca must include the Input section when input is non-empty."""
         from training.lora_trainer import _format_alpaca
         result = _format_alpaca(
             {"instruction": ["Translate"], "input": ["Hello"], "output": ["Bonjour"]},
@@ -149,7 +126,6 @@ class TestFullFormattingFix:
         assert "Bonjour" in text
 
     def test_format_alpaca_eos_token_appended(self):
-        """EOS token must be at the end of every formatted example."""
         from training.lora_trainer import _format_alpaca
         eos = "<|end_of_text|>"
         result = _format_alpaca(
@@ -159,7 +135,6 @@ class TestFullFormattingFix:
         assert result["text"][0].endswith(eos)
 
     def test_format_alpaca_batched_multiple_examples(self):
-        """_format_alpaca must handle multiple examples in a single batch."""
         from training.lora_trainer import _format_alpaca
         result = _format_alpaca(
             {
