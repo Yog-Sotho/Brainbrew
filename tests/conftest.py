@@ -39,17 +39,27 @@ def _install_heavy_stubs() -> None:
         "distilabel.pipeline",
         "distilabel.steps",
         "distilabel.steps.tasks",
+        "distilabel.steps.base",
         "distilabel.llms",
     ]:
         if mod_name not in sys.modules:
             sys.modules[mod_name] = _make_stub(mod_name)
 
-    # Pipeline
+    # Pipeline — must support context manager protocol
     MockPipeline = MagicMock(name="Pipeline")
     sys.modules["distilabel.pipeline"].Pipeline = MockPipeline
 
+    # FIX C-05: Step base class stub — orchestrator.py imports this
+    MockStep = type("Step", (), {
+        "__init_subclass__": classmethod(lambda cls, **kw: None),
+        "process": lambda self, inputs: iter([inputs]),
+    })
+    # Make it a MagicMock that also acts as a base class
+    sys.modules["distilabel.steps.base"].Step = MagicMock(name="Step")
+
     # Steps
-    for cls_name in ["LoadDataFromDicts", "KeepColumns", "FilterRows", "RenameColumns", "FilterStep"]:
+    for cls_name in ["LoadDataFromDicts", "KeepColumns", "FilterRows",
+                     "RenameColumns", "FilterStep"]:
         setattr(sys.modules["distilabel.steps"], cls_name, MagicMock(name=cls_name))
 
     # Tasks
@@ -65,6 +75,7 @@ def _install_heavy_stubs() -> None:
         unsloth = _make_stub("unsloth")
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_token = "</s>"
         FastLM = MagicMock()
         FastLM.from_pretrained.return_value = (mock_model, mock_tokenizer)
         FastLM.get_peft_config.return_value = MagicMock()
@@ -118,7 +129,8 @@ def _install_heavy_stubs() -> None:
         for attr in ["set_page_config", "title", "caption", "header", "checkbox",
                      "text_input", "selectbox", "slider", "file_uploader", "button",
                      "error", "warning", "success", "stop", "progress", "download_button",
-                     "balloons", "sidebar", "expander"]:
+                     "balloons", "sidebar", "expander", "divider", "columns",
+                     "metric", "markdown", "info", "empty"]:
             setattr(st, attr, MagicMock())
         sys.modules["streamlit"] = st
 
