@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brainbrew"
+version = "1.2.0"
+description = "No-code synthetic LLM training dataset generator"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+    {name = "YogSotho"},
+]
+keywords = [
+    "llm", "synthetic-data", "dataset", "distillation", "training-data",
+    "machine-learning", "ai", "vllm", "unsloth", "lora",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/Yog-Sotho/Brainbrew"
+Repository = "https://github.com/Yog-Sotho/Brainbrew"
+Issues = "https://github.com/Yog-Sotho/Brainbrew/issues"
+
+# ── pytest ───────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# ── mypy ─────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "distilabel.*",
+    "unsloth.*",
+    "trl.*",
+    "vllm.*",
+    "pdfminer.*",
+    "langchain_text_splitters.*",
+]
+ignore_missing_imports = true
+
+# ── ruff ─────────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "orchestrator", "pipeline", "training", "publish"]
