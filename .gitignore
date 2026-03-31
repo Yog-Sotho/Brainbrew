@@ -1,0 +1,44 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Generated datasets (but NOT test fixtures)
+alpaca_dataset.jsonl
+sharegpt_dataset.jsonl
+chatml_dataset.jsonl
+openai_dataset.jsonl
+
+# Model artifacts
+models/
+trained_adapter/
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment secrets
+.env
+
+# Backup / merge artifacts
+*.orig
+*.bak
+*.swp
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+install.log
+
+# Checkpoints (generated at runtime)
+checkpoints/
