@@ -4,8 +4,12 @@ optional LoRA training, and optional HF publishing.
 
 Heavy GPU imports (via lora_trainer) and optional HF imports (via hf_publisher)
 are deferred to inside their respective conditional blocks so this module is
-safely importable on CPU-only hosts like Streamlit Cloud.
+safely importable on CPU-only hosts.
 """
+from __future__ import annotations
+
+import hashlib
+import json
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -18,18 +22,13 @@ from distilabel.steps.base import Step
 from distilabel.llms import OpenAILLM, vLLM
 
 from config import DistillationConfig, QualityMode
-from pipeline.document_loader import semantic_chunk
-from pipeline.exporter import export_alpaca
-
-# FIX: train_lora and publish_dataset are NOT imported at module level.
-# lora_trainer pulls in transformers/trl/unsloth which require CUDA and are
-# not available on Streamlit Cloud. Importing them here crashes the app on
-# startup even when the user never enables LoRA training.
-# Both are imported lazily inside their respective `if` blocks below.
+from pipeline.document_loader import semantic_chunk, character_chunk
+from pipeline.exporter import export_dataset
 
 logger = structlog.get_logger(__name__)
 
-MAX_SOURCE_BYTES = 100 * 1024 * 1024  # 100 MB
+MAX_SOURCE_BYTES: int = 100 * 1024 * 1024  # 100 MB
+MAX_EXPORT_RECORDS: int = 500_000
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +48,8 @@ class FilterAndRenameOutputs(Step):
     def outputs(self) -> list[str]:
         return ["output"]
 
-    def process(self, inputs: list[dict[str, Any]]) -> None:  # type: ignore[override]
+    def process(self, inputs: list[dict[str, Any]]) -> Any:  # type: ignore[override]
+        # FIX M-11: yield individual batches correctly per distilabel Step protocol
         kept = []
         for row in inputs:
             gen = row.get("generation", "")
@@ -58,33 +58,210 @@ class FilterAndRenameOutputs(Step):
         yield kept
 
 
+# ---------------------------------------------------------------------------
+# Enhancement 10: Quality scoring
+# ---------------------------------------------------------------------------
+_QUALITY_THRESHOLDS = {
+    "SUPER":    {"min_records": 100, "min_avg_len": 300, "min_unique_ratio": 0.95},
+    "GOOD":     {"min_records": 50,  "min_avg_len": 200, "min_unique_ratio": 0.85},
+    "NORMAL":   {"min_records": 20,  "min_avg_len": 100, "min_unique_ratio": 0.70},
+    "BAD":      {"min_records": 5,   "min_avg_len": 50,  "min_unique_ratio": 0.50},
+}
+
+
+def score_dataset(dataset_path: Path) -> dict[str, Any]:
+    """Score the generated dataset and return a quality report.
+
+    Returns dict with keys: grade, record_count, avg_output_length,
+    unique_ratio, details.
+    """
+    records: list[dict] = []
+    try:
+        with open(dataset_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except (OSError, IOError):
+        return {
+            "grade": "DISASTER",
+            "record_count": 0,
+            "avg_output_length": 0,
+            "unique_ratio": 0.0,
+            "details": "Could not read dataset file.",
+        }
+
+    if not records:
+        return {
+            "grade": "DISASTER",
+            "record_count": 0,
+            "avg_output_length": 0,
+            "unique_ratio": 0.0,
+            "details": "Dataset is empty — no valid records produced.",
+        }
+
+    # Compute metrics
+    record_count = len(records)
+    output_lengths = [len(r.get("output", "")) for r in records]
+    avg_output_len = sum(output_lengths) / len(output_lengths) if output_lengths else 0
+
+    # Unique instruction ratio
+    instructions = [r.get("instruction", "") for r in records]
+    unique_instructions = len(set(instructions))
+    unique_ratio = unique_instructions / len(instructions) if instructions else 0.0
+
+    # Determine grade
+    grade = "BAD"
+    for level in ["SUPER", "GOOD", "NORMAL", "BAD"]:
+        thresholds = _QUALITY_THRESHOLDS[level]
+        if (record_count >= thresholds["min_records"]
+                and avg_output_len >= thresholds["min_avg_len"]
+                and unique_ratio >= thresholds["min_unique_ratio"]):
+            grade = level
+            break
+
+    # Build human-readable details
+    detail_parts = [
+        f"{record_count} records generated",
+        f"Average output length: {avg_output_len:.0f} chars",
+        f"Instruction uniqueness: {unique_ratio:.0%}",
+    ]
+    if avg_output_len < 100:
+        detail_parts.append("⚠ Outputs are very short — consider using Research mode.")
+    if unique_ratio < 0.70:
+        detail_parts.append("⚠ Many duplicate instructions — increase dataset_size or source material.")
+
+    return {
+        "grade": grade,
+        "record_count": record_count,
+        "avg_output_length": avg_output_len,
+        "unique_ratio": unique_ratio,
+        "details": " · ".join(detail_parts),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Enhancement 7: Checkpoint support
+# ---------------------------------------------------------------------------
+def _load_checkpoint(checkpoint_dir: Optional[str]) -> dict[str, Any]:
+    """Load checkpoint state if it exists."""
+    if not checkpoint_dir:
+        return {}
+    cp_path = Path(checkpoint_dir) / "brainbrew_checkpoint.json"
+    if cp_path.exists():
+        try:
+            return json.loads(cp_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_checkpoint(checkpoint_dir: Optional[str], state: dict[str, Any]) -> None:
+    """Save checkpoint state."""
+    if not checkpoint_dir:
+        return
+    cp_dir = Path(checkpoint_dir)
+    cp_dir.mkdir(parents=True, exist_ok=True)
+    cp_path = cp_dir / "brainbrew_checkpoint.json"
+    cp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Enhancement 4: Multi-model support
+# ---------------------------------------------------------------------------
+def _create_llm(model_name: str, cfg: DistillationConfig) -> Any:
+    """Create an LLM instance for a single model."""
+    if cfg.use_vllm:
+        return vLLM(
+            model=model_name,
+            max_new_tokens=cfg.max_new_tokens,
+            temperature=cfg.temperature,
+        )
+    else:
+        return OpenAILLM(
+            model=model_name,
+            api_key=cfg.api_key,
+            max_new_tokens=cfg.max_new_tokens,
+            temperature=cfg.temperature,
+        )
+
+
+def _run_single_pipeline(
+    prompts: list[str],
+    llm: Any,
+    num_evolutions: int,
+    batch_size: int,
+    raw_path: Path,
+) -> None:
+    """Run a single distilabel pipeline for one model and write results."""
+    with Pipeline(name="brainbrew") as pipeline:
+        loader = LoadDataFromDicts(
+            data=[{"instruction": p} for p in prompts],
+            batch_size=batch_size,
+        )
+        evol = EvolInstruct(llm=llm, num_evolutions=num_evolutions)
+        gen = TextGeneration(
+            llm=llm,
+            input_mappings={"instruction": "evolved_instruction"},
+        )
+        filter_rename = FilterAndRenameOutputs(min_length=100)
+        keep = KeepColumns(columns=["instruction", "output"])
+
+        loader >> evol >> gen >> filter_rename >> keep
+
+    distiset = pipeline.run(use_cache=False)
+    distiset["default"]["train"].to_json(str(raw_path))
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 def run_distillation(
     cfg: DistillationConfig,
     source_file: Path,
     progress_callback: Optional[Callable[[int], None]] = None,
+    output_dir: Optional[Path] = None,
 ) -> Path:
+    """Run the full Brainbrew distillation pipeline.
+
+    Args:
+        cfg: Validated pipeline configuration.
+        source_file: Path to concatenated source text.
+        progress_callback: Optional callback receiving progress 0-100.
+        output_dir: Directory for output files (default: temp dir adjacent to source).
+
+    Returns:
+        Path to the final exported dataset JSONL.
+    """
     # Redact api_key before logging
-    safe_cfg = cfg.model_dump(exclude_none=True)
-    if "api_key" in safe_cfg:
-        safe_cfg["api_key"] = "***REDACTED***"
+    safe_cfg = cfg.safe_dict()
     logger.info("Starting distillation", config=safe_cfg)
 
     def _progress(pct: int) -> None:
         if progress_callback:
             progress_callback(min(pct, 100))
 
-    # -- Stage 1: load & chunk -----------------------------------------------
+    # -- Stage 1: load & validate source -------------------------------------
     source_bytes = source_file.stat().st_size
     if source_bytes > MAX_SOURCE_BYTES:
         raise ValueError(
-            f"Source file is {source_bytes / 1e6:.0f} MB -- exceeds the 100 MB limit. "
+            f"Source file is {source_bytes / 1e6:.0f} MB — exceeds the 100 MB limit. "
             "Split the document into smaller files and run multiple times."
         )
 
     text = source_file.read_text(encoding="utf-8")
     _progress(5)
 
-    chunks = semantic_chunk(text)
+    # -- Stage 2: chunk text ------------------------------------------------
+    # Enhancement 9: use semantic chunking when enabled
+    if cfg.use_semantic_chunking:
+        chunks = semantic_chunk(text)
+    else:
+        chunks = character_chunk(text)
+
     prompts = [
         f"Explain the following concept from the document clearly and completely:\n\n{c}"
         for c in chunks
@@ -92,70 +269,126 @@ def run_distillation(
     logger.info("Document chunked", chunks=len(prompts))
     _progress(15)
 
+    # -- Enhancement 7: check for checkpoint --------------------------------
+    checkpoint = _load_checkpoint(cfg.checkpoint_dir)
+    completed_prompts = set(checkpoint.get("completed_hashes", []))
+    if completed_prompts:
+        original_count = len(prompts)
+        prompts = [
+            p for p in prompts
+            if hashlib.sha256(p.encode()).hexdigest() not in completed_prompts
+        ]
+        logger.info(
+            "Checkpoint resumed",
+            skipped=original_count - len(prompts),
+            remaining=len(prompts),
+        )
+        if not prompts:
+            logger.info("All prompts already processed. Skipping pipeline.")
+            final_path = Path(checkpoint.get("final_path", "alpaca_dataset.jsonl"))
+            _progress(100)
+            return final_path
+
+    # FIX M-02: use configurable output directory instead of cwd
+    if output_dir is None:
+        output_dir = source_file.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine output filename based on format
+    format_extensions = {
+        "alpaca": "alpaca_dataset.jsonl",
+        "sharegpt": "sharegpt_dataset.jsonl",
+        "chatml": "chatml_dataset.jsonl",
+        "openai": "openai_dataset.jsonl",
+    }
+    output_filename = format_extensions.get(cfg.output_format.value, "dataset.jsonl")
+    final_path = output_dir / output_filename
+
     with tempfile.TemporaryDirectory() as tmp:
-        raw_path = Path(tmp) / "raw.jsonl"
-        final_path = Path("alpaca_dataset.jsonl")
-
-        # -- Stage 2: initialise LLM backend ---------------------------------
-        if cfg.use_vllm:
-            llm = vLLM(
-                model=cfg.teacher_model.split(",")[0],
-                max_new_tokens=cfg.max_new_tokens,
-                temperature=cfg.temperature,
-            )
-        else:
-            llm = OpenAILLM(
-                model=cfg.teacher_model.split(",")[0],
-                api_key=cfg.api_key,
-                max_new_tokens=cfg.max_new_tokens,
-                temperature=cfg.temperature,
-            )
-        _progress(20)
-
-        # -- Stage 3: build pipeline -----------------------------------------
+        # -- Stage 3: initialise LLM backend(s) ------------------------------
+        model_names = [m.strip() for m in cfg.teacher_model.split(",") if m.strip()]
         num_evolutions = (
             3 if cfg.quality_mode == QualityMode.RESEARCH
             else 2 if cfg.quality_mode == QualityMode.BALANCED
             else 1
         )
+        _progress(20)
 
-        with Pipeline(name="brainbrew") as pipeline:
-            loader = LoadDataFromDicts(
-                data=[{"instruction": p} for p in prompts],
-                batch_size=cfg.batch_size,
+        # -- Stage 4: run pipeline(s) ----------------------------------------
+        raw_parts: list[Path] = []
+
+        if len(model_names) == 1:
+            # Single model — standard path
+            llm = _create_llm(model_names[0], cfg)
+            raw_path = Path(tmp) / "raw.jsonl"
+            logger.info("Running distilabel pipeline", model=model_names[0], prompts=len(prompts))
+            _run_single_pipeline(prompts, llm, num_evolutions, cfg.batch_size, raw_path)
+            raw_parts.append(raw_path)
+        else:
+            # Enhancement 4: multi-model ensemble — split prompts across models
+            logger.info(
+                "Multi-model ensemble",
+                models=model_names,
+                prompts_per_model=len(prompts) // len(model_names),
             )
-            evol = EvolInstruct(llm=llm, num_evolutions=num_evolutions)
-            gen = TextGeneration(
-                llm=llm,
-                input_mappings={"instruction": "evolved_instruction"},
-            )
-            filter_rename = FilterAndRenameOutputs(min_length=100)
-            keep = KeepColumns(columns=["instruction", "output"])
+            chunk_size = max(1, len(prompts) // len(model_names))
+            for i, model_name in enumerate(model_names):
+                start = i * chunk_size
+                end = start + chunk_size if i < len(model_names) - 1 else len(prompts)
+                model_prompts = prompts[start:end]
+                if not model_prompts:
+                    continue
+                llm = _create_llm(model_name, cfg)
+                raw_path = Path(tmp) / f"raw_{i}.jsonl"
+                logger.info(
+                    "Running pipeline for model",
+                    model=model_name,
+                    prompts=len(model_prompts),
+                )
+                _run_single_pipeline(
+                    model_prompts, llm, num_evolutions, cfg.batch_size, raw_path
+                )
+                raw_parts.append(raw_path)
 
-            loader >> evol >> gen >> filter_rename >> keep
-
-        # -- Stage 4: run pipeline -------------------------------------------
-        logger.info("Running distilabel pipeline", prompts=len(prompts))
-        distiset = pipeline.run(use_cache=False)
         _progress(70)
 
-        # -- Stage 5: export -------------------------------------------------
-        distiset["default"]["train"].to_json(str(raw_path))
-        export_alpaca(str(raw_path), str(final_path))
-        logger.info("Dataset exported", path=str(final_path))
+        # -- Stage 5: merge multi-model outputs if needed ---------------------
+        merged_raw = Path(tmp) / "merged_raw.jsonl"
+        with open(merged_raw, "w", encoding="utf-8") as fout:
+            for part in raw_parts:
+                if part.exists():
+                    with open(part, encoding="utf-8") as fin:
+                        for line in fin:
+                            fout.write(line)
+
+        # -- Stage 6: export in chosen format --------------------------------
+        record_count = export_dataset(
+            str(merged_raw),
+            str(final_path),
+            output_format=cfg.output_format.value,
+            enable_dedup=cfg.enable_dedup,
+            max_records=MAX_EXPORT_RECORDS,
+        )
+        logger.info("Dataset exported", path=str(final_path), records=record_count)
         _progress(80)
 
-        # -- Stage 6: optional LoRA training ---------------------------------
+        # -- Enhancement 7: save checkpoint -----------------------------------
+        all_hashes = list(completed_prompts)
+        for p in prompts:
+            all_hashes.append(hashlib.sha256(p.encode()).hexdigest())
+        _save_checkpoint(cfg.checkpoint_dir, {
+            "completed_hashes": all_hashes,
+            "final_path": str(final_path),
+        })
+
+        # -- Stage 7: optional LoRA training ---------------------------------
         if cfg.train_model:
-            # FIX: lazy import -- only pulled in when user actually enables LoRA.
-            # Keeps transformers/trl/unsloth off the import graph at startup.
             from training.lora_trainer import train_lora
             train_lora(str(final_path), cfg.base_model, "trained_adapter", cfg.lora_rank)
             _progress(92)
 
-        # -- Stage 7: optional HF publish ------------------------------------
+        # -- Stage 8: optional HF publish ------------------------------------
         if cfg.publish_dataset and cfg.hf_repo:
-            # FIX: lazy import for symmetry and to keep startup import graph minimal.
             from publish.hf_publisher import publish_dataset
             publish_dataset(str(final_path), cfg.hf_repo, os.getenv("HF_TOKEN"))
             _progress(96)
