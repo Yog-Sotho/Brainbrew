@@ -5,7 +5,7 @@ __pycache__/
 dist/
 build/
 *.egg
-
+old/
 # Generated datasets (but NOT test fixtures)
 alpaca_dataset.jsonl
 sharegpt_dataset.jsonl
