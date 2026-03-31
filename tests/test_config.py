@@ -1,26 +1,23 @@
 """
 tests/test_config.py
 
-Tests for config.py — DistillationConfig, QualityMode, and QUALITY_MODE_LABELS.
-
-Covers:
-  - Valid construction (all defaults, all fields explicit)
-  - Field boundary validation (ge/le enforcement)
-  - teacher_model validator (blank, whitespace-only, comma-separated)
-  - api_key never leaks via repr() or safe_dict()
-  - safe_dict() redacts only api_key, preserves all other fields
-  - QualityMode enum exhaustiveness
-  - FIX: QUALITY_MODE_LABELS — all three modes have a friendly label
-  - FIX: QUALITY_MODE_LABELS values contain expected emoji/tone
-  - judge_model exists on the model (reserved field)
-  - Pydantic type coercion and rejection
+Tests for config.py — DistillationConfig, QualityMode, OutputFormat,
+QUALITY_MODE_LABELS, OUTPUT_FORMAT_LABELS, safe_dict(), __repr__.
 """
 from __future__ import annotations
+
+import json
 
 import pytest
 from pydantic import ValidationError
 
-from config import DistillationConfig, QualityMode, QUALITY_MODE_LABELS
+from config import (
+    DistillationConfig,
+    OutputFormat,
+    QualityMode,
+    QUALITY_MODE_LABELS,
+    OUTPUT_FORMAT_LABELS,
+)
 
 
 # ── QualityMode ───────────────────────────────────────────────────────────────
@@ -40,7 +37,25 @@ class TestQualityMode:
             QualityMode("turbo")
 
 
-# ── FIX: QUALITY_MODE_LABELS ─────────────────────────────────────────────────
+# ── OutputFormat ──────────────────────────────────────────────────────────────
+
+class TestOutputFormat:
+
+    def test_all_four_values_exist(self):
+        assert OutputFormat.ALPACA.value == "alpaca"
+        assert OutputFormat.SHAREGPT.value == "sharegpt"
+        assert OutputFormat.CHATML.value == "chatml"
+        assert OutputFormat.OPENAI.value == "openai"
+
+    def test_string_coercion(self):
+        assert OutputFormat("sharegpt") is OutputFormat.SHAREGPT
+
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValueError):
+            OutputFormat("invalid_format")
+
+
+# ── QUALITY_MODE_LABELS ──────────────────────────────────────────────────────
 
 class TestQualityModeLabels:
 
@@ -59,18 +74,23 @@ class TestQualityModeLabels:
         labels = list(QUALITY_MODE_LABELS.values())
         assert len(labels) == len(set(labels)), "All labels must be unique"
 
-    def test_labels_contain_friendly_tone(self):
-        """Labels should communicate quality level without technical jargon."""
-        fast_label = QUALITY_MODE_LABELS[QualityMode.FAST].lower()
-        research_label = QUALITY_MODE_LABELS[QualityMode.RESEARCH].lower()
-        # Fast should feel lighter/quicker than research
-        assert fast_label != research_label
-
     def test_labels_map_back_to_modes(self):
-        """Every label must round-trip back to its QualityMode."""
         for mode, label in QUALITY_MODE_LABELS.items():
             found = next((k for k, v in QUALITY_MODE_LABELS.items() if v == label), None)
             assert found == mode
+
+
+# ── OUTPUT_FORMAT_LABELS ─────────────────────────────────────────────────────
+
+class TestOutputFormatLabels:
+
+    def test_all_four_formats_have_labels(self):
+        for fmt in OutputFormat:
+            assert fmt in OUTPUT_FORMAT_LABELS
+
+    def test_labels_are_unique(self):
+        labels = list(OUTPUT_FORMAT_LABELS.values())
+        assert len(labels) == len(set(labels))
 
 
 # ── Valid construction ────────────────────────────────────────────────────────
@@ -88,6 +108,7 @@ class TestDistillationConfigValid:
             teacher_model="gpt-4o-mini",
             dataset_size=500,
             quality_mode=QualityMode.RESEARCH,
+            output_format=OutputFormat.SHAREGPT,
             use_vllm=False,
             train_model=True,
             publish_dataset=True,
@@ -97,9 +118,12 @@ class TestDistillationConfigValid:
             batch_size=32,
             lora_rank=32,
             api_key="sk-test",
+            use_semantic_chunking=True,
+            enable_dedup=False,
         )
         assert cfg.teacher_model == "gpt-4o-mini"
         assert cfg.quality_mode == QualityMode.RESEARCH
+        assert cfg.output_format == OutputFormat.SHAREGPT
 
     def test_teacher_model_whitespace_stripped(self):
         cfg = DistillationConfig(teacher_model="  gpt-4o  ")
@@ -110,7 +134,6 @@ class TestDistillationConfigValid:
         assert "gpt-4o" in cfg.teacher_model
 
     def test_judge_model_field_exists(self):
-        """judge_model is a reserved field — must exist even though unused."""
         cfg = DistillationConfig(teacher_model="gpt-4o")
         assert hasattr(cfg, "judge_model")
         assert cfg.judge_model == "gpt-4o-mini"
@@ -118,6 +141,14 @@ class TestDistillationConfigValid:
     def test_default_api_key_is_none(self):
         cfg = DistillationConfig(teacher_model="gpt-4o")
         assert cfg.api_key is None
+
+    def test_default_output_format_is_alpaca(self):
+        cfg = DistillationConfig(teacher_model="gpt-4o")
+        assert cfg.output_format == OutputFormat.ALPACA
+
+    def test_default_enable_dedup_is_true(self):
+        cfg = DistillationConfig(teacher_model="gpt-4o")
+        assert cfg.enable_dedup is True
 
 
 # ── Validation errors ─────────────────────────────────────────────────────────
@@ -169,7 +200,37 @@ class TestDistillationConfigInvalid:
             DistillationConfig(teacher_model="gpt-4o", batch_size=0)
 
 
-# ── Security: api_key must never leak ────────────────────────────────────────
+# ── FIX C-01: safe_dict() ────────────────────────────────────────────────────
+
+class TestSafeDict:
+
+    def test_safe_dict_redacts_api_key(self):
+        cfg = DistillationConfig(teacher_model="gpt-4o", api_key="sk-secret-123")
+        safe = cfg.safe_dict()
+        assert safe["api_key"] == "***REDACTED***"
+        assert "sk-secret-123" not in str(safe)
+
+    def test_safe_dict_preserves_other_fields(self):
+        cfg = DistillationConfig(teacher_model="gpt-4o", api_key="sk-secret")
+        safe = cfg.safe_dict()
+        assert safe["teacher_model"] == "gpt-4o"
+        assert "dataset_size" in safe
+
+    def test_safe_dict_without_api_key_omits_field(self):
+        cfg = DistillationConfig(teacher_model="gpt-4o")
+        safe = cfg.safe_dict()
+        assert "api_key" not in safe
+
+    def test_safe_dict_is_json_serialisable(self):
+        cfg = DistillationConfig(teacher_model="gpt-4o", api_key="sk-secret")
+        safe = cfg.safe_dict()
+        try:
+            json.dumps(safe)
+        except (TypeError, ValueError) as e:
+            pytest.fail(f"safe_dict() is not JSON-serialisable: {e}")
+
+
+# ── FIX C-02: API key never leaks via repr/str ──────────────────────────────
 
 class TestApiKeyNeverLeaks:
 
@@ -187,16 +248,6 @@ class TestApiKeyNeverLeaks:
         safe = cfg_with_key.safe_dict()
         assert "sk-supersecret-key-12345" not in str(safe)
         assert safe["api_key"] == "***REDACTED***"
-
-    def test_safe_dict_preserves_all_other_fields(self, cfg_with_key):
-        safe = cfg_with_key.safe_dict()
-        assert safe["teacher_model"] == "gpt-4o"
-        assert "dataset_size" in safe
-
-    def test_safe_dict_without_api_key_has_no_api_key_field(self):
-        cfg = DistillationConfig(teacher_model="gpt-4o")
-        safe = cfg.safe_dict()
-        assert "api_key" not in safe
 
     def test_model_dump_via_safe_dict_never_leaks(self, cfg_with_key):
         safe = cfg_with_key.safe_dict()
