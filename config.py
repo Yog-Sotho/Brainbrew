@@ -64,6 +64,7 @@ class DistillationConfig(BaseModel):
     use_semantic_chunking: bool = False
     enable_dedup: bool = True
     checkpoint_dir: Optional[str] = None
+    sanitize_dataset: bool = False
 
     @field_validator("teacher_model")
     @classmethod
