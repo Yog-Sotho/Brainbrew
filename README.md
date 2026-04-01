@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="brainbrew_logo.png" alt="Brainbrew Logo" width="420" style="margin-bottom: 20px;">
+  <img src="assets/brainbrew_logo.png" alt="Brainbrew Logo" width="420" style="margin-bottom: 20px;">
   <h1>Brainbrew</h1>
   <p><strong>The ridiculously easy, stupidly powerful no-code machine that turns your boring PDFs and TXT files into god-tier synthetic LLM training data</strong></p>
 
@@ -32,7 +32,7 @@
 <p><strong>Current version: v1.2.0</strong></p>
 
 <div align="center">
-  <img src="knowledge.png" alt="Knowledge inputs flowing into Brainbrew" width="480" style="margin: 20px 0;">
+  <img src="assets/knowledge.png" alt="Knowledge inputs flowing into Brainbrew" width="480" style="margin: 20px 0;">
   <p><em>Drop in any knowledge — PDFs, text, books, docs — and let Brainbrew do the rest.</em></p>
 </div>
 
@@ -131,7 +131,7 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
 <p>Done. Go train a model that actually knows your niche.</p>
 
 <div align="center">
-  <img src="output.png" alt="Brainbrew output flowing into your model" width="480" style="margin: 20px 0;">
+  <img src="assets/output.png" alt="Brainbrew output flowing into your model" width="480" style="margin: 20px 0;">
   <p><em>High-quality Q&amp;A pairs stream straight into your model's brain. Automated study, zero effort.</em></p>
 </div>
 
@@ -230,7 +230,7 @@ pytest tests/test_security.py -v</code></pre>
 <h2>Contributing</h2>
 
 <div align="center">
-  <img src="collaboration.png" alt="The Brainbrew community brewing together" width="480" style="margin: 20px 0;">
+  <img src="assets/collaboration.png" alt="The Brainbrew community brewing together" width="480" style="margin: 20px 0;">
   <p><em>Every great dataset starts with great contributors. Jump in — the cauldron is warm.</em></p>
 </div>
 
