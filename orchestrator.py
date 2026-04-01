@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -21,7 +22,7 @@ from distilabel.steps import LoadDataFromDicts, KeepColumns
 from distilabel.steps.base import Step
 from distilabel.llms import OpenAILLM, vLLM
 
-from config import DistillationConfig, QualityMode
+from config import DistillationConfig, OutputFormat, QualityMode
 from pipeline.document_loader import semantic_chunk, character_chunk
 from pipeline.exporter import export_dataset
 
@@ -29,6 +30,14 @@ logger = structlog.get_logger(__name__)
 
 MAX_SOURCE_BYTES: int = 100 * 1024 * 1024  # 100 MB
 MAX_EXPORT_RECORDS: int = 500_000
+
+# Map output formats to the fields the sanitizer should require as non-empty.
+_SANITIZER_REQUIRE_FIELDS: dict[str, list[str]] = {
+    "alpaca":   ["instruction", "output"],
+    "sharegpt":  ["conversations"],
+    "chatml":    ["messages"],
+    "openai":    ["messages"],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +226,80 @@ def _run_single_pipeline(
 
 
 # ---------------------------------------------------------------------------
+# Post-export dataset sanitization (native — no subprocess)
+# ---------------------------------------------------------------------------
+def _run_sanitizer(
+    dataset_path: Path,
+    output_format: str,
+) -> Path:
+    """Run the native sanitizer on the exported dataset.
+
+    Applies PII redaction, HTML cleaning, deduplication, and quality gates.
+    On success the sanitized file replaces the original. On failure the
+    original is left untouched and a warning is logged.
+
+    Args:
+        dataset_path: Path to the exported JSONL dataset.
+        output_format: One of 'alpaca', 'sharegpt', 'chatml', 'openai'.
+
+    Returns:
+        Path to the (possibly sanitized) dataset — same as dataset_path.
+    """
+    from pipeline.sanitizer import SanitizerConfig, sanitize_dataset
+
+    sanitized_path = dataset_path.with_suffix(".sanitized.jsonl")
+
+    require_fields = _SANITIZER_REQUIRE_FIELDS.get(output_format, ["instruction", "output"])
+
+    san_cfg = SanitizerConfig(
+        remove_pii=True,
+        pii_mask=False,
+        clean_html=True,
+        deduplicate=True,
+        require_fields=require_fields,
+    )
+
+    try:
+        stats = sanitize_dataset(dataset_path, sanitized_path, san_cfg)
+
+        # Verify sanitized output is non-empty
+        if not sanitized_path.exists() or sanitized_path.stat().st_size == 0:
+            logger.warning(
+                "Sanitizer produced empty output — keeping original dataset",
+            )
+            if sanitized_path.exists():
+                sanitized_path.unlink()
+            return dataset_path
+
+        # Replace original with sanitized version
+        shutil.move(str(sanitized_path), str(dataset_path))
+
+        logger.info(
+            "Dataset sanitized",
+            original_records=stats.total,
+            kept_records=stats.kept,
+            filtered_quality=stats.filtered_quality,
+            filtered_require=stats.filtered_require,
+            deduplicated=stats.deduplicated,
+            pii_redacted=stats.pii_redacted,
+        )
+
+        return dataset_path
+
+    except Exception as exc:
+        logger.warning(
+            "Sanitizer failed — keeping original dataset",
+            error=str(exc),
+        )
+        if sanitized_path.exists():
+            try:
+                sanitized_path.unlink()
+            except OSError:
+                pass
+        return dataset_path
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 def run_distillation(
@@ -371,6 +454,14 @@ def run_distillation(
         )
         logger.info("Dataset exported", path=str(final_path), records=record_count)
         _progress(80)
+
+        # -- Stage 6.5: optional post-export sanitization --------------------
+        if cfg.sanitize_dataset:
+            final_path = _run_sanitizer(
+                final_path,
+                output_format=cfg.output_format.value,
+            )
+        _progress(85)
 
         # -- Enhancement 7: save checkpoint -----------------------------------
         all_hashes = list(completed_prompts)
