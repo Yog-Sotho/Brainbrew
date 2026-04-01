@@ -64,6 +64,14 @@ with st.sidebar:
         value=True,
         help="Remove exact and near-duplicate instruction/output pairs.",
     )
+    sanitize_dataset: bool = st.checkbox(
+        "Clean & sanitize dataset",
+        value=False,
+        help=(
+            "Run the Dataset Sanitizer after generation to remove PII, "
+            "deduplicate, strip HTML artifacts, and enforce quality gates."
+        ),
+    )
 
 # ── Main panel ───────────────────────────────────────────────────────────────
 
@@ -225,6 +233,7 @@ if st.button("🚀 Generate Dataset", type="primary"):
             api_key=openai_key or os.getenv("OPENAI_API_KEY"),
             use_semantic_chunking=use_semantic_chunking,
             enable_dedup=enable_dedup,
+            sanitize_dataset=sanitize_dataset,
             checkpoint_dir=str(tmp_path / "checkpoints"),
         )
 
@@ -238,6 +247,7 @@ if st.button("🚀 Generate Dataset", type="primary"):
             20:  "🤖 Initialising model…",
             70:  "⚗️  Running pipeline… (this is the long part)",
             80:  "💾 Exporting dataset…",
+            85:  "🧹 Sanitizing dataset…",
             92:  "🎯 Training LoRA adapter…",
             96:  "🚀 Publishing to Hugging Face…",
             100: "✅ Done!",
