@@ -249,9 +249,9 @@ pytest tests/test_security.py -v</code></pre>
 <p>MIT — do whatever you want. Just don't blame us if your model becomes too powerful and takes over the world.</p>
 
 <div align="center" style="margin-top: 50px;">
-  <img src="brainbrew_logo.png" alt="Brainbrew Logo" width="280">
+  <img src="assets/brainbrew_logo.png" alt="Brainbrew Logo" width="280">
   <h2>Now go brew some brains.</h2>
   <p><strong>Made with chaos, coffee, and zero patience for bad datasets.</strong></p>
   <p><em>Star the repo if it saved you 20 hours this week. You know you want to.</em></p>
-  Yog-Sotho
+  Yog-Sotho ❤️
 </div>
