@@ -4,6 +4,8 @@
 # ── Core UI & config ────────────────────────────────────────────────────────
 streamlit==1.42.0
 pydantic==2.10.6
+beautifulsoup4
+lxml
 python-dotenv==1.0.1
 structlog==25.1.0
 rich>=10.14.0,<14
@@ -11,6 +13,7 @@ rich>=10.14.0,<14
 # ── Document processing ─────────────────────────────────────────────────────
 pdfminer.six==20240706
 langchain-text-splitters==0.3.6
+pandas
 tiktoken==0.8.0
 
 # ── Data & ML framework ─────────────────────────────────────────────────────

@@ -56,6 +56,8 @@ def _read_raw_records(
                 "instruction": instruction,
                 "input": obj.get("input", ""),
                 "output": output,
+                "rating": obj.get("rating"),
+                "rationale": obj.get("rationale"),
             })
     return records
 
@@ -138,11 +140,16 @@ def deduplicate_records(
 # ── Format converters ────────────────────────────────────────────────────────
 
 def _to_alpaca(rec: dict) -> dict:
-    return {
+    res = {
         "instruction": rec["instruction"],
         "input": rec.get("input", ""),
         "output": rec["output"],
     }
+    if rec.get("rating") is not None:
+        res["rating"] = rec["rating"]
+    if rec.get("rationale"):
+        res["rationale"] = rec["rationale"]
+    return res
 
 
 def _to_sharegpt(rec: dict) -> dict:
@@ -180,11 +187,25 @@ def _to_openai(rec: dict) -> dict:
     }
 
 
+def _to_csv(rec: dict) -> dict:
+    res = {
+        "instruction": rec["instruction"],
+        "input": rec.get("input", ""),
+        "output": rec["output"],
+    }
+    if rec.get("rating") is not None:
+        res["rating"] = rec["rating"]
+    if rec.get("rationale"):
+        res["rationale"] = rec["rationale"]
+    return res
+
+
 _FORMATTERS = {
     "alpaca": _to_alpaca,
     "sharegpt": _to_sharegpt,
     "chatml": _to_chatml,
     "openai": _to_openai,
+    "csv": _to_csv,
 }
 
 
@@ -221,10 +242,15 @@ def export_dataset(
     if enable_dedup:
         records = deduplicate_records(records)
 
-    with open(output_path, "w", encoding="utf-8") as fout:
-        for rec in records:
-            formatted = formatter(rec)
-            fout.write(json.dumps(formatted, ensure_ascii=False) + "\n")
+    if output_format == "csv":
+        import pandas as pd
+        df = pd.DataFrame([formatter(r) for r in records])
+        df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    else:
+        with open(output_path, "w", encoding="utf-8") as fout:
+            for rec in records:
+                formatted = formatter(rec)
+                fout.write(json.dumps(formatted, ensure_ascii=False) + "\n")
 
     return len(records)
 

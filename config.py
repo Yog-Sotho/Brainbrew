@@ -26,6 +26,7 @@ class OutputFormat(str, Enum):
     SHAREGPT = "sharegpt"
     CHATML = "chatml"
     OPENAI = "openai"
+    CSV = "csv"
 
 
 # FIX C-07: app.py imports this dict for the selectbox display labels.
@@ -40,6 +41,7 @@ OUTPUT_FORMAT_LABELS: dict[OutputFormat, str] = {
     OutputFormat.SHAREGPT: "ShareGPT (conversations)",
     OutputFormat.CHATML:  "ChatML (messages array)",
     OutputFormat.OPENAI:  "OpenAI fine-tuning (messages JSONL)",
+    OutputFormat.CSV:     "CSV Spreadsheet (compatible with Excel/Sheets)",
 }
 
 

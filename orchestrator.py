@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 import os
 import structlog
 from distilabel.pipeline import Pipeline
-from distilabel.steps.tasks import EvolInstruct, TextGeneration
+from distilabel.steps.tasks import EvolInstruct, TextGeneration, UltraFeedback
 from distilabel.steps import LoadDataFromDicts, KeepColumns
 from distilabel.steps.base import Step
 from distilabel.llms import OpenAILLM, vLLM
@@ -204,6 +204,7 @@ def _run_single_pipeline(
     num_evolutions: int,
     batch_size: int,
     raw_path: Path,
+    judge_llm: Optional[Any] = None,
 ) -> None:
     """Run a single distilabel pipeline for one model and write results."""
     with Pipeline(name="brainbrew") as pipeline:
@@ -217,9 +218,18 @@ def _run_single_pipeline(
             input_mappings={"instruction": "evolved_instruction"},
         )
         filter_rename = FilterAndRenameOutputs(min_length=100)
-        keep = KeepColumns(columns=["instruction", "output"])
 
-        loader >> evol >> gen >> filter_rename >> keep
+        if judge_llm:
+            judge = UltraFeedback(
+                llm=judge_llm,
+                aspect="overall-rating",
+                input_mappings={"instruction": "evolved_instruction", "generations": "output"}
+            )
+            keep = KeepColumns(columns=["instruction", "output", "rating", "rationale"])
+            loader >> evol >> gen >> filter_rename >> judge >> keep
+        else:
+            keep = KeepColumns(columns=["instruction", "output"])
+            loader >> evol >> gen >> filter_rename >> keep
 
     distiset = pipeline.run(use_cache=False)
     distiset["default"]["train"].to_json(str(raw_path))
@@ -400,12 +410,18 @@ def run_distillation(
         # -- Stage 4: run pipeline(s) ----------------------------------------
         raw_parts: list[Path] = []
 
+        judge_llm = None
+        if cfg.judge_model:
+            judge_llm = _create_llm(cfg.judge_model, cfg)
+
         if len(model_names) == 1:
             # Single model — standard path
             llm = _create_llm(model_names[0], cfg)
             raw_path = Path(tmp) / "raw.jsonl"
             logger.info("Running distilabel pipeline", model=model_names[0], prompts=len(prompts))
-            _run_single_pipeline(prompts, llm, num_evolutions, cfg.batch_size, raw_path)
+            _run_single_pipeline(
+                prompts, llm, num_evolutions, cfg.batch_size, raw_path, judge_llm=judge_llm
+            )
             raw_parts.append(raw_path)
         else:
             # Enhancement 4: multi-model ensemble — split prompts across models
@@ -429,7 +445,7 @@ def run_distillation(
                     prompts=len(model_prompts),
                 )
                 _run_single_pipeline(
-                    model_prompts, llm, num_evolutions, cfg.batch_size, raw_path
+                    model_prompts, llm, num_evolutions, cfg.batch_size, raw_path, judge_llm=judge_llm
                 )
                 raw_parts.append(raw_path)
 

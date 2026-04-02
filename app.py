@@ -53,6 +53,14 @@ with st.sidebar:
     )
 
     st.divider()
+    st.subheader("⚖️ Quality Judge")
+    judge_model: str = st.text_input(
+        "Judge Model",
+        value="gpt-4o-mini",
+        help="Model used to grade the generated pairs (LLM-as-a-judge). Leave empty to skip.",
+    )
+
+    st.divider()
     st.subheader("🧪 Experimental")
     use_semantic_chunking: bool = st.checkbox(
         "Semantic chunking",
@@ -117,8 +125,8 @@ if publish:
     )
 
 uploaded_files = st.file_uploader(
-    "Upload documents (PDF/TXT)",
-    type=["pdf", "txt"],
+    "Upload documents (PDF/TXT/MD/HTML)",
+    type=["pdf", "txt", "md", "html"],
     accept_multiple_files=True,
 )
 
@@ -214,6 +222,10 @@ if st.button("🚀 Generate Dataset", type="primary"):
                     if uploaded.type == "application/pdf":
                         from pdfminer.high_level import extract_text
                         content: str = extract_text(uploaded)
+                    elif uploaded.type == "text/html" or uploaded.name.endswith(".html"):
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(uploaded.read(), "lxml")
+                        content = soup.get_text(separator="\n")
                     else:
                         content = uploaded.read().decode("utf-8")
                     f.write(content + "\n\n")
@@ -223,6 +235,7 @@ if st.button("🚀 Generate Dataset", type="primary"):
 
         cfg = DistillationConfig(
             teacher_model=teacher_model,
+            judge_model=judge_model if judge_model.strip() else None,
             quality_mode=QualityMode(quality_mode),
             output_format=OutputFormat(output_format),
             dataset_size=dataset_size,
