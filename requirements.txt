@@ -30,7 +30,7 @@ trl==0.12.2
 transformers==4.48.0
 accelerate==1.2.1
 bitsandbytes==0.45.0
-sentencepiece==0.2.0
+sentencepiece==0.2.1
 
 # ── Utility ──────────────────────────────────────────────────────────────────
 tenacity==9.0.0
