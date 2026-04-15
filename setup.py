@@ -12,7 +12,7 @@ setup(
         "python-dotenv==1.0.1",
         "structlog==25.1.0",
         "pdfminer.six==20240706",
-        "langchain-text-splitters==0.3.6",
+        "langchain-text-splitters==0.3.9",
         "tiktoken==0.8.0",
         "openai>=1.50.0,<2.0",
         "distilabel[openai,vllm]==1.5.2",
