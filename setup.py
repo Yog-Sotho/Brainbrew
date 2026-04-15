@@ -20,7 +20,7 @@ setup(
         "huggingface_hub==0.28.1",
         "pandas==2.2.3",
         "numpy==2.2.1",
-        "vllm==0.6.6.post1",
+        "vllm==0.19.0",
         "unsloth==2024.12.7",
         "trl==0.12.2",
         "transformers==4.48.0",
