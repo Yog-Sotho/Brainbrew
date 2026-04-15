@@ -26,7 +26,7 @@ setup(
         "transformers==4.48.0",
         "accelerate==1.2.1",
         "bitsandbytes==0.45.0",
-        "sentencepiece==0.2.0",
+        "sentencepiece==0.2.1",
         "tenacity==9.0.0",
         "tqdm==4.67.1",
         "rich>=10.14.0,<14",
