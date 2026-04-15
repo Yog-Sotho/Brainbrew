@@ -7,7 +7,7 @@ setup(
     packages=find_packages(exclude=["tests", "tests.*", "docs"]),
     python_requires=">=3.12",
     install_requires=[
-        "streamlit==1.42.0",
+        "streamlit==1.54.0",
         "pydantic==2.10.6",
         "python-dotenv==1.0.1",
         "structlog==25.1.0",
