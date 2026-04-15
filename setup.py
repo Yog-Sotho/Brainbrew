@@ -23,7 +23,7 @@ setup(
         "vllm==0.19.0",
         "unsloth==2024.12.7",
         "trl==0.12.2",
-        "transformers==4.48.0",
+        "transformers==5.0.0rc3",
         "accelerate==1.2.1",
         "bitsandbytes==0.45.0",
         "sentencepiece==0.2.1",
