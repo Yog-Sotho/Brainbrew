@@ -118,7 +118,9 @@ def _install_heavy_stubs() -> None:
 
     # ── langchain_text_splitters ─────────────────────────────────────────────
     # Only stub if not already installed (it IS in requirements.txt)
-    if "langchain_text_splitters" not in sys.modules:
+    try:
+        import langchain_text_splitters
+    except ImportError:
         lc = _make_stub("langchain_text_splitters")
         lc.RecursiveCharacterTextSplitter = MagicMock(name="RecursiveCharacterTextSplitter")
         sys.modules["langchain_text_splitters"] = lc
