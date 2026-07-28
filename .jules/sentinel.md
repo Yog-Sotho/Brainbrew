@@ -1,0 +1,4 @@
+## 2026-07-28 - Hugging Face Token Leakage & Repository Misconfiguration
+**Vulnerability:** Hugging Face API tokens entered via UI were ignored and resolved from environment variables. Additionally, there was no protection against logging `hf_token` if added to `DistillationConfig`, and no configuration-time validation of repository name formats.
+**Learning:** Credentials and repository name validation must occur early at initialization (configuration-time) in `DistillationConfig` to prevent late-stage execution failures and accidental logging or leakage of sensitive API tokens in stdout, logs, or error stack traces.
+**Prevention:** Always validate format and presence of all credentials and target repository name schemas in Pydantic config schemas, and apply robust `safe_dict` / redaction filters so that all credentials are consistently redacted.

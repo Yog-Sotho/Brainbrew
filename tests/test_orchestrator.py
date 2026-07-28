@@ -51,11 +51,8 @@ def _run_with_mocks(cfg, source_file, progress_callback=None, tmp_path=None):
     """
     mock_pipeline_instance = MagicMock()
     mock_pipeline_instance.__enter__.return_value = mock_pipeline_instance
+    mock_pipeline_instance.__exit__ = MagicMock(return_value=False)
     mock_pipeline_instance.run.return_value = _make_distiset(tmp_path or Path("."))
-    # Pipeline is used as a context manager: with Pipeline(...) as pipeline:
-    mock_pipeline_cls = MagicMock(return_value=mock_pipeline_instance)
-    mock_pipeline_cls.__enter__ = MagicMock(return_value=mock_pipeline_instance)
-    mock_pipeline_cls.__exit__ = MagicMock(return_value=False)
 
     output_dir = tmp_path / "output" if tmp_path else Path(".") / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -247,11 +244,11 @@ class TestConditionalSteps:
         mocks["publish_dataset"].assert_not_called()
 
     def test_publish_not_called_when_hf_repo_none(self, source_file, tmp_path):
-        cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                                  quality_mode=QualityMode.FAST, dataset_size=100,
-                                  publish_dataset=True, hf_repo=None)
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        mocks["publish_dataset"].assert_not_called()
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
+                               quality_mode=QualityMode.FAST, dataset_size=100,
+                               publish_dataset=True, hf_repo=None)
 
 
 # ── Pipeline execution ───────────────────────────────────────────────────────

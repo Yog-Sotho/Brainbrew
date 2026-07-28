@@ -231,6 +231,7 @@ if st.button("🚀 Generate Dataset", type="primary"):
             publish_dataset=publish,
             hf_repo=hf_repo_name if publish else None,
             api_key=openai_key or os.getenv("OPENAI_API_KEY"),
+            hf_token=hf_token or os.getenv("HF_TOKEN"),
             use_semantic_chunking=use_semantic_chunking,
             enable_dedup=enable_dedup,
             sanitize_dataset=sanitize_dataset,

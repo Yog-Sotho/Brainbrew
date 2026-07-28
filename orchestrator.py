@@ -481,7 +481,7 @@ def run_distillation(
         # -- Stage 8: optional HF publish ------------------------------------
         if cfg.publish_dataset and cfg.hf_repo:
             from publish.hf_publisher import publish_dataset
-            publish_dataset(str(final_path), cfg.hf_repo, os.getenv("HF_TOKEN"))
+            publish_dataset(str(final_path), cfg.hf_repo, cfg.hf_token)
             _progress(96)
 
         _progress(100)

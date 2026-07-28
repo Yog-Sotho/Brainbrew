@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class QualityMode(str, Enum):
@@ -61,6 +61,7 @@ class DistillationConfig(BaseModel):
     batch_size: int = Field(64, ge=1)
     lora_rank: int = Field(16, ge=8)
     api_key: Optional[str] = None
+    hf_token: Optional[str] = None
     use_semantic_chunking: bool = False
     enable_dedup: bool = True
     checkpoint_dir: Optional[str] = None
@@ -73,12 +74,38 @@ class DistillationConfig(BaseModel):
             raise ValueError("Teacher model is required")
         return v.strip()
 
+    @field_validator("hf_repo")
+    @classmethod
+    def validate_hf_repo(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v_stripped = v.strip()
+            if not v_stripped:
+                return None
+            import re
+            _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
+            if not _REPO_NAME_RE.match(v_stripped):
+                raise ValueError(
+                    f"Invalid Hugging Face repository name format: {v_stripped!r}. "
+                    "Must be in 'username/repo-slug' format."
+                )
+            return v_stripped
+        return v
+
+    @model_validator(mode="after")
+    def validate_publish_config(self) -> DistillationConfig:
+        if self.publish_dataset:
+            if not self.hf_repo or not self.hf_repo.strip():
+                raise ValueError("hf_repo is required when publish_dataset is enabled")
+        return self
+
     # ── FIX C-01: safe serialisation that never leaks secrets ────────────
     def safe_dict(self) -> dict:
-        """Return model_dump with api_key redacted. Safe for logging / display."""
+        """Return model_dump with api_key and hf_token redacted. Safe for logging / display."""
         d = self.model_dump(exclude_none=True)
         if "api_key" in d:
             d["api_key"] = "***REDACTED***"
+        if "hf_token" in d:
+            d["hf_token"] = "***REDACTED***"
         return d
 
     # ── FIX C-02: prevent API key from leaking in repr / str ─────────────

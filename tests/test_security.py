@@ -177,3 +177,36 @@ class TestCombinedSecurityInvariants:
             json.dumps(safe)
         except (TypeError, ValueError) as e:
             pytest.fail(f"safe_dict() is not JSON-serialisable: {e}")
+
+
+# ---------------------------------------------------------------------------
+# S-03 — HF Token and Repo Name security checks
+# ---------------------------------------------------------------------------
+
+class TestHfTokenAndRepoSecurity:
+
+    def test_hf_token_not_in_repr_or_str(self):
+        from config import DistillationConfig
+        token = "hf_secret_token_12345"
+        cfg = DistillationConfig(teacher_model="gpt-4o", hf_token=token)
+        assert token not in repr(cfg)
+        assert token not in str(cfg)
+
+    def test_hf_token_redacted_in_safe_dict(self):
+        from config import DistillationConfig
+        token = "hf_secret_token_12345"
+        cfg = DistillationConfig(teacher_model="gpt-4o", hf_token=token)
+        safe = cfg.safe_dict()
+        assert safe["hf_token"] == "***REDACTED***"
+
+    def test_hf_repo_validation_fails_on_invalid_format(self):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="Invalid Hugging Face repository name format"):
+            DistillationConfig(teacher_model="gpt-4o", hf_repo="invalid-repo-format-no-slash")
+
+    def test_publish_dataset_requires_hf_repo(self):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="hf_repo is required when publish_dataset is enabled"):
+            DistillationConfig(teacher_model="gpt-4o", publish_dataset=True, hf_repo=None)
