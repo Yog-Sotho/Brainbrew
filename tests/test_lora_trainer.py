@@ -59,10 +59,10 @@ def _run(dataset_file, output_dir, mock_model, mock_tokenizer,
     mock_trainer = MagicMock()
     mock_args = MagicMock()
 
-    with patch("training.lora_trainer.FastLanguageModel", fast_lm), \
-         patch("training.lora_trainer.SFTTrainer", return_value=mock_trainer) as MockSFT, \
-         patch("training.lora_trainer.load_dataset", return_value=mock_ds) as MockLoad, \
-         patch("training.lora_trainer.TrainingArguments", return_value=mock_args) as MockArgs:
+    with patch("unsloth.FastLanguageModel", fast_lm), \
+         patch("trl.SFTTrainer", return_value=mock_trainer) as MockSFT, \
+         patch("datasets.load_dataset", return_value=mock_ds) as MockLoad, \
+         patch("transformers.TrainingArguments", return_value=mock_args) as MockArgs:
 
         from training.lora_trainer import train_lora
         train_lora(dataset_file, base_model, output_dir, lora_rank=lora_rank)

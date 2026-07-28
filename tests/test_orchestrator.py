@@ -50,6 +50,7 @@ def _run_with_mocks(cfg, source_file, progress_callback=None, tmp_path=None):
         so they are patched at training.lora_trainer / publish.hf_publisher.
     """
     mock_pipeline_instance = MagicMock()
+    mock_pipeline_instance.__enter__.return_value = mock_pipeline_instance
     mock_pipeline_instance.run.return_value = _make_distiset(tmp_path or Path("."))
     # Pipeline is used as a context manager: with Pipeline(...) as pipeline:
     mock_pipeline_cls = MagicMock(return_value=mock_pipeline_instance)
