@@ -71,11 +71,15 @@ def _ngram_shingles(text: str, n: int = 3) -> set[str]:
 
 
 def _jaccard_similarity(a: set[str], b: set[str]) -> float:
-    """Compute Jaccard similarity between two shingle sets."""
+    """Compute Jaccard similarity between two shingle sets.
+
+    ⚡ Optimization: Replaces the costly set union (a | b) with set length arithmetic
+    to avoid allocating a new set, hashing its elements, and copying values.
+    """
     if not a or not b:
         return 0.0
     intersection = len(a & b)
-    union = len(a | b)
+    union = len(a) + len(b) - intersection
     return intersection / union if union > 0 else 0.0
 
 
@@ -88,6 +92,11 @@ def deduplicate_records(
     Strategy:
       1. Exact dedup via instruction+output hash.
       2. Near-dedup via Jaccard similarity on character trigram shingles.
+
+    ⚡ Optimization: Uses mathematical bounding to skip Jaccard set operations entirely
+    for pairs that cannot possibly be duplicates. Jaccard similarity is upper-bounded
+    by min(|A|, |B|) / max(|A|, |B|). Since combined similarity is the average of
+    instruction and output similarities, both must be >= 2 * threshold - 1.0.
 
     Args:
         records: List of {"instruction", "input", "output"} dicts.
@@ -102,7 +111,11 @@ def deduplicate_records(
 
     seen_hashes: set[str] = set()
     unique: list[dict] = []
-    shingle_index: list[tuple[set[str], set[str]]] = []
+    # Store shingles alongside their lengths for O(1) ratio pruning
+    shingle_index: list[tuple[set[str], set[str], int, int]] = []
+
+    # Precalculate minimum similarity required on either field to meet the combined threshold
+    min_sim = 2.0 * similarity_threshold - 1.0
 
     for rec in records:
         # Step 1: exact hash dedup
@@ -115,10 +128,33 @@ def deduplicate_records(
         # Step 2: near-duplicate via shingle Jaccard
         inst_shingles = _ngram_shingles(rec["instruction"])
         out_shingles = _ngram_shingles(rec["output"])
+        len_inst = len(inst_shingles)
+        len_out = len(out_shingles)
 
         is_near_dup = False
-        for existing_inst, existing_out in shingle_index:
+        for existing_inst, existing_out, len_exist_inst, len_exist_out in shingle_index:
+            # Pruning Check 1: Instruction shingle ratio bound
+            if len_inst == 0 or len_exist_inst == 0:
+                inst_ratio = 0.0
+            else:
+                inst_ratio = (len_inst / len_exist_inst) if len_inst < len_exist_inst else (len_exist_inst / len_inst)
+            if inst_ratio < min_sim:
+                continue
+
+            # Pruning Check 2: Output shingle ratio bound
+            if len_out == 0 or len_exist_out == 0:
+                out_ratio = 0.0
+            else:
+                out_ratio = (len_out / len_exist_out) if len_out < len_exist_out else (len_exist_out / len_out)
+            if out_ratio < min_sim:
+                continue
+
+            # Pruning Check 3: Actual instruction similarity bound
             inst_sim = _jaccard_similarity(inst_shingles, existing_inst)
+            if inst_sim < min_sim:
+                continue
+
+            # If all bounds pass, compute final Jaccard similarity
             out_sim = _jaccard_similarity(out_shingles, existing_out)
             combined = (inst_sim + out_sim) / 2.0
             if combined >= similarity_threshold:
@@ -127,7 +163,7 @@ def deduplicate_records(
 
         if not is_near_dup:
             unique.append(rec)
-            shingle_index.append((inst_shingles, out_shingles))
+            shingle_index.append((inst_shingles, out_shingles, len_inst, len_out))
 
     removed = len(records) - len(unique)
     if removed > 0:
