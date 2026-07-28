@@ -137,6 +137,40 @@ if uploaded_files:
             "Consider splitting into smaller files for faster iteration."
         )
 
+    # 🎨 Palette: Interactive document parsed text preview & safety validation
+    with st.expander("📄 Document Parsed Previews & Validation", expanded=False):
+        for uploaded in uploaded_files:
+            try:
+                uploaded.seek(0)
+                if uploaded.type == "application/pdf":
+                    from pdfminer.high_level import extract_text
+                    content = extract_text(uploaded)
+                else:
+                    content = uploaded.read().decode("utf-8")
+                uploaded.seek(0)  # reset pointer for subsequent reads
+
+                char_count = len(content)
+                word_count = len(content.split())
+                st.markdown(f"**{uploaded.name}** ({char_count:,} characters, {word_count:,} words)")
+
+                if not content.strip():
+                    st.error(
+                        f"❌ **Error: '{uploaded.name}' parsed to empty text!** "
+                        "This document is either empty or a scanned PDF image without OCR. "
+                        "It cannot be processed."
+                    )
+                else:
+                    preview_text = content[:300] + ("..." if len(content) > 300 else "")
+                    st.text_area(
+                        f"Preview: {uploaded.name}",
+                        value=preview_text,
+                        height=90,
+                        disabled=True,
+                        label_visibility="collapsed",
+                    )
+            except Exception as e:
+                st.error(f"❌ **Error parsing '{uploaded.name}':** {e}")
+
 
 # ── FIX M-06: Cost / time estimator with current pricing ────────────────────
 
@@ -211,11 +245,13 @@ if st.button("🚀 Generate Dataset", type="primary"):
                     continue
                 # Parse with error handling
                 try:
+                    uploaded.seek(0)
                     if uploaded.type == "application/pdf":
                         from pdfminer.high_level import extract_text
                         content: str = extract_text(uploaded)
                     else:
                         content = uploaded.read().decode("utf-8")
+                    uploaded.seek(0)  # reset pointer
                     f.write(content + "\n\n")
                 except Exception as e:
                     st.warning(f"Could not parse '{uploaded.name}': {e} — skipping.")
