@@ -171,12 +171,12 @@ def redact_pii(text: str, mask: bool = False) -> Tuple[str, bool]:
     """
     pii_found = False
     for pattern, token, kind in _PII_PATTERNS:
-        if pattern.search(text):
+        if mask and kind in _MASK_FN:
+            text, count = pattern.subn(_MASK_FN[kind], text)
+        else:
+            text, count = pattern.subn(token, text)
+        if count > 0:
             pii_found = True
-            if mask and kind in _MASK_FN:
-                text = pattern.sub(_MASK_FN[kind], text)
-            else:
-                text = pattern.sub(token, text)
     return text, pii_found
 
 
@@ -313,6 +313,37 @@ def get_record_hash(record: Dict[str, Any], normalize: bool = True) -> str:
 # ============================================================================
 # Per-record sanitizer
 # ============================================================================
+def _sanitize_record_internal(
+    record: Dict[str, Any],
+    cfg: SanitizerConfig,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], bool]:
+    """Internal version of sanitize_record that also returns whether PII was found."""
+    if not isinstance(record, dict):
+        return None, 'not a dict', False
+
+    # Require-fields gate (pre-sanitization — check structure)
+    for rf in cfg.require_fields:
+        v = record.get(rf)
+        is_empty = (
+            v is None
+            or (isinstance(v, str) and not v.strip())
+            or (not isinstance(v, (bool, int, float)) and not v)
+        )
+        if is_empty:
+            return None, f"missing required field '{rf}'", False
+
+    # Sanitize all fields
+    sanitized, pii_found = _sanitize_value(record, cfg=cfg)
+
+    # Quality gate (post-sanitization — check content quality)
+    quality_text = _extract_text_for_quality(sanitized)
+    rejection = check_quality(quality_text, cfg)
+    if rejection is not None:
+        return None, rejection, pii_found
+
+    return sanitized, None, pii_found
+
+
 def sanitize_record(
     record: Dict[str, Any],
     cfg: SanitizerConfig,
@@ -326,30 +357,8 @@ def sanitize_record(
     Returns:
         (sanitized_record, None) on success, or (None, rejection_reason) on failure.
     """
-    if not isinstance(record, dict):
-        return None, 'not a dict'
-
-    # Require-fields gate (pre-sanitization — check structure)
-    for rf in cfg.require_fields:
-        v = record.get(rf)
-        is_empty = (
-            v is None
-            or (isinstance(v, str) and not v.strip())
-            or (not isinstance(v, (bool, int, float)) and not v)
-        )
-        if is_empty:
-            return None, f"missing required field '{rf}'"
-
-    # Sanitize all fields
-    sanitized, pii_found = _sanitize_value(record, cfg=cfg)
-
-    # Quality gate (post-sanitization — check content quality)
-    quality_text = _extract_text_for_quality(sanitized)
-    rejection = check_quality(quality_text, cfg)
-    if rejection is not None:
-        return None, rejection
-
-    return sanitized, None
+    sanitized, rejection, _ = _sanitize_record_internal(record, cfg)
+    return sanitized, rejection
 
 
 # ============================================================================
@@ -395,7 +404,7 @@ def sanitize_dataset(
                 stats.filtered_quality += 1
                 continue
 
-            sanitized, rejection = sanitize_record(record, cfg)
+            sanitized, rejection, pii_found = _sanitize_record_internal(record, cfg)
 
             if sanitized is None:
                 if rejection and 'missing required field' in rejection:
@@ -413,18 +422,8 @@ def sanitize_dataset(
                 seen_hashes.add(h)
 
             # Track PII redaction
-            _, pii_found = _sanitize_value(record, cfg=SanitizerConfig(
-                remove_pii=False, clean_html=False, max_depth=0,
-            ))
-            # Check original vs sanitized for PII changes
-            if cfg.remove_pii:
-                original_text = ' '.join(
-                    str(v) for v in record.values() if isinstance(v, str)
-                )
-                for pattern, _, _ in _PII_PATTERNS:
-                    if pattern.search(original_text):
-                        stats.pii_redacted += 1
-                        break
+            if cfg.remove_pii and pii_found:
+                stats.pii_redacted += 1
 
             fout.write(json.dumps(sanitized, ensure_ascii=False) + '\n')
             stats.kept += 1
