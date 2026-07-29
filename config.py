@@ -8,9 +8,10 @@ QUALITY_MODE_LABELS (friendly display names for the Streamlit UI), and OutputFor
 from __future__ import annotations
 
 from enum import Enum
+import re
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationInfo
 
 
 class QualityMode(str, Enum):
@@ -67,12 +68,39 @@ class DistillationConfig(BaseModel):
     checkpoint_dir: Optional[str] = None
     sanitize_dataset: bool = False
 
-    @field_validator("teacher_model")
+    @field_validator("api_key", "hf_token")
     @classmethod
-    def validate_teacher(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("Teacher model is required")
-        return v.strip()
+    def validate_secrets(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v_stripped = v.strip()
+            if not v_stripped:
+                return None
+            if len(v_stripped) > 512:
+                raise ValueError("Secret key/token exceeds maximum allowed length of 512 characters.")
+            if any(ord(c) < 32 or ord(c) > 126 for c in v_stripped):
+                raise ValueError("Secret key/token contains invalid or control characters.")
+            return v_stripped
+        return v
+
+    @field_validator("teacher_model", "base_model")
+    @classmethod
+    def validate_model_names(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        if v is None:
+            if info.field_name == "teacher_model":
+                raise ValueError("Teacher model is required")
+            return None
+        v_stripped = v.strip()
+        if not v_stripped:
+            if info.field_name == "teacher_model":
+                raise ValueError("Teacher model is required")
+            raise ValueError("Model name is required")
+        if len(v_stripped) > 255:
+            raise ValueError("Model name exceeds maximum allowed length of 255 characters.")
+        if ".." in v_stripped or v_stripped.startswith("/") or v_stripped.startswith("\\"):
+            raise ValueError("Model name cannot contain path traversal or absolute local paths.")
+        if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", v_stripped):
+            raise ValueError("Model name contains invalid characters.")
+        return v_stripped
 
     @field_validator("hf_repo")
     @classmethod
@@ -81,7 +109,6 @@ class DistillationConfig(BaseModel):
             v_stripped = v.strip()
             if not v_stripped:
                 return None
-            import re
             _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
             if not _REPO_NAME_RE.match(v_stripped):
                 raise ValueError(

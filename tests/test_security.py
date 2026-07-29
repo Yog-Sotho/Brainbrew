@@ -210,3 +210,61 @@ class TestHfTokenAndRepoSecurity:
         from pydantic import ValidationError
         with pytest.raises(ValidationError, match="hf_repo is required when publish_dataset is enabled"):
             DistillationConfig(teacher_model="gpt-4o", publish_dataset=True, hf_repo=None)
+
+
+# ---------------------------------------------------------------------------
+# S-04 — Secrets and Model Names Validation Security Checks
+# ---------------------------------------------------------------------------
+
+class TestInputValidationSecurity:
+
+    def test_secrets_max_length(self):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        long_key = "a" * 513
+        with pytest.raises(ValidationError, match="Secret key/token exceeds maximum allowed length"):
+            DistillationConfig(teacher_model="gpt-4o", api_key=long_key)
+        with pytest.raises(ValidationError, match="Secret key/token exceeds maximum allowed length"):
+            DistillationConfig(teacher_model="gpt-4o", hf_token=long_key)
+
+    def test_secrets_control_chars(self):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        bad_key = "sk-key\nwithnewlines"
+        with pytest.raises(ValidationError, match="Secret key/token contains invalid or control characters"):
+            DistillationConfig(teacher_model="gpt-4o", api_key=bad_key)
+
+    def test_model_names_max_length(self):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        long_model = "a" * 256
+        with pytest.raises(ValidationError, match="Model name exceeds maximum allowed length"):
+            DistillationConfig(teacher_model=long_model)
+        with pytest.raises(ValidationError, match="Model name exceeds maximum allowed length"):
+            DistillationConfig(teacher_model="gpt-4o", base_model=long_model)
+
+    @pytest.mark.parametrize("bad_name", [
+        "../../etc/passwd",
+        "/absolute/path",
+        "\\windows\\path",
+        "some_model/../other",
+    ])
+    def test_model_names_path_traversal(self, bad_name):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
+            DistillationConfig(teacher_model=bad_name)
+        with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
+            DistillationConfig(teacher_model="gpt-4o", base_model=bad_name)
+
+    @pytest.mark.parametrize("invalid_name", [
+        "model; rm -rf /",
+        "model`whoami`",
+        "model$(id)",
+        "model|cat",
+    ])
+    def test_model_names_invalid_chars(self, invalid_name):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="Model name contains invalid characters"):
+            DistillationConfig(teacher_model=invalid_name)
