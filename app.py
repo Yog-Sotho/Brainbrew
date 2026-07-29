@@ -188,9 +188,40 @@ st.info(
     f"·  Format: **{output_format}**"
 )
 
+# ── Proactive Input Validation ───────────────────────────────────────────────
+validation_errors = []
+
+if not uploaded_files:
+    validation_errors.append("Upload at least one document (PDF/TXT) to begin.")
+
+if not use_vllm and not openai_key and not os.getenv("OPENAI_API_KEY"):
+    validation_errors.append("OpenAI API Key is required when not using vLLM.")
+
+if publish:
+    if not hf_token and not os.getenv("HF_TOKEN"):
+        validation_errors.append("Hugging Face Token is required when publishing.")
+
+    if not hf_repo_name or not hf_repo_name.strip():
+        validation_errors.append("Hugging Face repository name is required when publishing.")
+    else:
+        _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
+        if not _REPO_NAME_RE.match(hf_repo_name.strip()):
+            validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
+
+if validation_errors:
+    st.error(
+        "⚠️ **Please resolve the following issues to enable dataset generation:**\n\n"
+        + "\n".join(f"- {err}" for err in validation_errors)
+    )
+    button_disabled = True
+    button_help = "Solve the validation errors listed above to enable dataset generation."
+else:
+    button_disabled = False
+    button_help = "Click to start the synthetic dataset distillation pipeline."
+
 # ── Generate button ──────────────────────────────────────────────────────────
 
-if st.button("🚀 Generate Dataset", type="primary"):
+if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, help=button_help):
     if not uploaded_files:
         st.error("Upload at least one document")
         st.stop()
