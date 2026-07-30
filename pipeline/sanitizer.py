@@ -277,7 +277,9 @@ def check_quality(text: str, cfg: SanitizerConfig) -> Optional[str]:
     unique_ratio = len(set(words)) / len(words) if words else 0.0
     if unique_ratio < cfg.min_unique_ratio:
         return f'low unique-word ratio ({unique_ratio:.3f} < {cfg.min_unique_ratio})'
-    ascii_ratio = sum(1 for c in text if ord(c) < 128) / len(text)
+    # ⚡ Optimization: Replace character-by-character generator expression and `ord()` calls
+    # with fast, C-level encoding length check to count ASCII characters.
+    ascii_ratio = len(text.encode('ascii', errors='ignore')) / len(text)
     if ascii_ratio < cfg.min_ascii_ratio:
         return f'low ASCII ratio ({ascii_ratio:.3f} < {cfg.min_ascii_ratio})'
     return None
