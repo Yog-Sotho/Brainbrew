@@ -193,6 +193,23 @@ validation_errors = []
 
 if not uploaded_files:
     validation_errors.append("Upload at least one document (PDF/TXT) to begin.")
+else:
+    for uploaded in uploaded_files:
+        # Reset stream pointer as a best practice
+        uploaded.seek(0)
+
+        # Check filename safety
+        if not _SAFE_FILENAME_RE.match(uploaded.name):
+            validation_errors.append(
+                f"File '{uploaded.name}' has an unsafe filename. "
+                "Only alphanumeric characters, dashes, underscores, spaces, and periods are allowed."
+            )
+        # Check file size limit
+        if getattr(uploaded, "size", 0) > MAX_HARD_BYTES:
+            validation_errors.append(
+                f"File '{uploaded.name}' exceeds the 50 MB hard size limit "
+                f"({uploaded.size / 1e6:.1f} MB)."
+            )
 
 if not use_vllm and not openai_key and not os.getenv("OPENAI_API_KEY"):
     validation_errors.append("OpenAI API Key is required when not using vLLM.")
@@ -232,6 +249,8 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
 
         with open(source_path, "w", encoding="utf-8") as f:
             for uploaded in uploaded_files:
+                # Reset stream pointer
+                uploaded.seek(0)
                 # Validate filename
                 if not _SAFE_FILENAME_RE.match(uploaded.name):
                     st.warning(f"Skipped '{uploaded.name}' — unsafe filename.")

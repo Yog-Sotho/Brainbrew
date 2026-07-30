@@ -20,9 +20,31 @@ def validate_inputs(
 ) -> list[str]:
     """Mirroring the validation logic in app.py to verify its behavior."""
     validation_errors = []
+    _SAFE_FILENAME_RE = re.compile(r"^[\w\-. ]+$")
 
     if not uploaded_files:
         validation_errors.append("Upload at least one document (PDF/TXT) to begin.")
+    else:
+        for uploaded in uploaded_files:
+            # support both real UploadedFile/Mock objects and strings (for backward compatibility in tests)
+            name = uploaded if isinstance(uploaded, str) else getattr(uploaded, "name", "")
+            size = 0 if isinstance(uploaded, str) else getattr(uploaded, "size", 0)
+
+            if not isinstance(uploaded, str) and hasattr(uploaded, "seek"):
+                uploaded.seek(0)
+
+            # Check filename safety
+            if not _SAFE_FILENAME_RE.match(name):
+                validation_errors.append(
+                    f"File '{name}' has an unsafe filename. "
+                    "Only alphanumeric characters, dashes, underscores, spaces, and periods are allowed."
+                )
+            # Check file size limit
+            if size > 50 * 1024 * 1024:
+                validation_errors.append(
+                    f"File '{name}' exceeds the 50 MB hard size limit "
+                    f"({size / 1e6:.1f} MB)."
+                )
 
     if not use_vllm and not openai_key and not env_openai_key:
         validation_errors.append("OpenAI API Key is required when not using vLLM.")
@@ -138,3 +160,46 @@ def test_validation_valid_hf_publish():
         hf_repo_name="username/repo-slug",
     )
     assert len(errors) == 0
+
+
+class MockUploadedFile:
+    def __init__(self, name: str, size: int):
+        self.name = name
+        self.size = size
+        self.seek_called = False
+
+    def seek(self, position: int):
+        if position == 0:
+            self.seek_called = True
+
+
+def test_validation_unsafe_filename():
+    unsafe_file = MockUploadedFile(name="../unsafe_path.txt", size=1024)
+    errors = validate_inputs(
+        uploaded_files=[unsafe_file],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=False,
+        hf_token="",
+        env_hf_token=None,
+        hf_repo_name=None,
+    )
+    assert unsafe_file.seek_called
+    assert "File '../unsafe_path.txt' has an unsafe filename." in errors[0]
+
+
+def test_validation_oversized_file():
+    oversized_file = MockUploadedFile(name="very_large.txt", size=60 * 1024 * 1024) # 60 MB
+    errors = validate_inputs(
+        uploaded_files=[oversized_file],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=False,
+        hf_token="",
+        env_hf_token=None,
+        hf_repo_name=None,
+    )
+    assert oversized_file.seek_called
+    assert "File 'very_large.txt' exceeds the 50 MB hard size limit" in errors[0]
