@@ -268,3 +268,41 @@ class TestInputValidationSecurity:
         from pydantic import ValidationError
         with pytest.raises(ValidationError, match="Model name contains invalid characters"):
             DistillationConfig(teacher_model=invalid_name)
+
+    def test_judge_model_validation(self):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        # Verify valid judge model is accepted
+        cfg = DistillationConfig(teacher_model="gpt-4o", judge_model="gpt-4o-mini")
+        assert cfg.judge_model == "gpt-4o-mini"
+
+        # Verify invalid paths or traversals are rejected
+        with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
+            DistillationConfig(teacher_model="gpt-4o", judge_model="../../etc/passwd")
+
+        # Verify long names are rejected
+        with pytest.raises(ValidationError, match="Model name exceeds maximum allowed length"):
+            DistillationConfig(teacher_model="gpt-4o", judge_model="a" * 256)
+
+        # Verify invalid characters are rejected
+        with pytest.raises(ValidationError, match="Model name contains invalid characters"):
+            DistillationConfig(teacher_model="gpt-4o", judge_model="model; rm -rf /")
+
+    def test_checkpoint_dir_validation(self):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        # Verify valid directory path is accepted
+        cfg = DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints/run1")
+        assert cfg.checkpoint_dir == "checkpoints/run1"
+
+        # Verify path traversal is rejected
+        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain path traversal sequences"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints/../secret")
+
+        # Verify excessive length is rejected
+        with pytest.raises(ValidationError, match="Checkpoint directory path exceeds maximum allowed length"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="a" * 513)
+
+        # Verify control characters are rejected
+        with pytest.raises(ValidationError, match="Checkpoint directory path contains invalid or control characters"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints\nrun")

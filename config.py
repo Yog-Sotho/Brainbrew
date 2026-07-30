@@ -82,7 +82,7 @@ class DistillationConfig(BaseModel):
             return v_stripped
         return v
 
-    @field_validator("teacher_model", "base_model")
+    @field_validator("teacher_model", "base_model", "judge_model")
     @classmethod
     def validate_model_names(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
         if v is None:
@@ -101,6 +101,22 @@ class DistillationConfig(BaseModel):
         if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", v_stripped):
             raise ValueError("Model name contains invalid characters.")
         return v_stripped
+
+    @field_validator("checkpoint_dir")
+    @classmethod
+    def validate_checkpoint_dir(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v_stripped = v.strip()
+            if not v_stripped:
+                return None
+            if len(v_stripped) > 512:
+                raise ValueError("Checkpoint directory path exceeds maximum allowed length of 512 characters.")
+            if ".." in v_stripped:
+                raise ValueError("Checkpoint directory path cannot contain path traversal sequences ('..').")
+            if any(ord(c) < 32 or ord(c) > 126 for c in v_stripped):
+                raise ValueError("Checkpoint directory path contains invalid or control characters.")
+            return v_stripped
+        return v
 
     @field_validator("hf_repo")
     @classmethod
