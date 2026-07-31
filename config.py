@@ -125,6 +125,11 @@ class DistillationConfig(BaseModel):
             v_stripped = v.strip()
             if not v_stripped:
                 return None
+            if ".." in v_stripped:
+                raise ValueError(
+                    f"Invalid Hugging Face repository name format: {v_stripped!r}. "
+                    "Cannot contain path traversal sequences ('..')."
+                )
             _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
             if not _REPO_NAME_RE.match(v_stripped):
                 raise ValueError(

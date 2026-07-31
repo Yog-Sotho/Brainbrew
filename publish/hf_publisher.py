@@ -38,6 +38,11 @@ def publish_dataset(
         )
 
     # FIX M-10: validate repo name format
+    if ".." in repo_name:
+        raise ValueError(
+            f"Invalid repo name: {repo_name!r}. "
+            "Cannot contain path traversal sequences ('..')."
+        )
     if not _REPO_NAME_RE.match(repo_name):
         raise ValueError(
             f"Invalid repo name: {repo_name!r}. "
