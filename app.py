@@ -11,18 +11,17 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import streamlit as st
-from dotenv import load_dotenv
 import structlog
+from dotenv import load_dotenv
 
 from config import (
+    OUTPUT_FORMAT_LABELS,
+    QUALITY_MODE_LABELS,
     DistillationConfig,
     OutputFormat,
     QualityMode,
-    QUALITY_MODE_LABELS,
-    OUTPUT_FORMAT_LABELS,
 )
 from orchestrator import run_distillation, score_dataset
 
@@ -41,16 +40,28 @@ st.caption("Production-grade synthetic dataset generator — GPU edition")
 with st.sidebar:
     st.header("⚙️ Advanced Settings")
     use_vllm: bool = st.checkbox("Use vLLM (GPU required)", value=True)
+
+    openai_env_key = os.getenv("OPENAI_API_KEY", "")
     openai_key: str = st.text_input(
         "OpenAI API Key",
-        value=os.getenv("OPENAI_API_KEY", ""),
+        value=openai_env_key,
         type="password",
+        help="Enter your OpenAI API key. Get one at the [OpenAI API Keys page](https://platform.openai.com/api-keys).",
     )
+    if openai_env_key:
+        st.caption("🔑 *API Key loaded automatically from environment*")
+    elif not use_vllm:
+        st.caption("⚠️ *API Key required to run OpenAI models*")
+
+    hf_env_token = os.getenv("HF_TOKEN", "")
     hf_token: str = st.text_input(
         "Hugging Face Token",
-        value=os.getenv("HF_TOKEN", ""),
+        value=hf_env_token,
         type="password",
+        help="Enter your Hugging Face write token. Create one at the [Hugging Face Settings page](https://huggingface.co/settings/tokens).",
     )
+    if hf_env_token:
+        st.caption("🔑 *HF Token loaded automatically from environment*")
 
     st.divider()
     st.subheader("🧪 Experimental")
@@ -80,6 +91,10 @@ teacher_model: str = st.text_input(
     value="gpt-4o" if not use_vllm else "meta-llama/Meta-Llama-3.1-8B-Instruct",
     help="Comma-separated list for multi-model ensemble (e.g. gpt-4o,gpt-4.1).",
 )
+st.caption(
+    "💡 **Popular Presets:** `gpt-4o` (OpenAI default) · `gpt-4o-mini` (Fast & Cheap) · "
+    "`meta-llama/Meta-Llama-3.1-8B-Instruct` (vLLM local) · `Qwen/Qwen2.5-72B-Instruct` (vLLM large)"
+)
 
 # Quality mode selector
 quality_label: str = st.selectbox(
@@ -107,7 +122,7 @@ train_model: bool = st.checkbox("Auto-train LoRA adapter", value=False)
 publish: bool = st.checkbox("Publish to Hugging Face", value=False)
 
 # Editable HF repo name
-hf_repo_name: Optional[str] = None
+hf_repo_name: str | None = None
 if publish:
     default_repo: str = f"{os.getenv('HF_USERNAME', 'yourusername')}/brainbrew-dataset"
     hf_repo_name = st.text_input(
@@ -315,6 +330,7 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                 cfg, source_path, _on_progress, output_dir=tmp_path
             )
             st.success("✅ Dataset generated!")
+            st.toast("🎉 Synthetic dataset generated successfully!", icon="🧠")
             status.empty()
 
             # ── Enhancement 10: Quality scoring dashboard ────────────────
