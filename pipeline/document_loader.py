@@ -15,11 +15,14 @@ from typing import Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
+_PARAGRAPH_RE = re.compile(r"\n\s*\n")
+
+
 def _validate_inputs(text: str, chunk_size: int, overlap: int) -> None:
     """Shared input validation for all chunking strategies."""
     if not isinstance(text, str):
         raise TypeError(f"text must be str, got {type(text).__name__}")
-    if not text.strip():
+    if not text or text.isspace():
         raise ValueError("Cannot chunk empty or whitespace-only text.")
     if overlap >= chunk_size:
         raise ValueError(f"overlap ({overlap}) must be less than chunk_size ({chunk_size}).")
@@ -80,7 +83,7 @@ def semantic_chunk(
         return character_chunk(text, chunk_size, overlap)
 
     # Step 1: split into paragraphs
-    paragraphs = re.split(r"\n\s*\n", text)
+    paragraphs = _PARAGRAPH_RE.split(text)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
 
     # Step 2: break oversized paragraphs into sentences

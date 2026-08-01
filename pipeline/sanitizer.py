@@ -67,6 +67,8 @@ _HTML_TAG_RE = re.compile(r'<[^>]+>')
 
 def strip_html(text: str) -> str:
     """Remove HTML/XML tags, replacing them with a single space."""
+    if '<' not in text:
+        return text
     return _HTML_TAG_RE.sub(' ', text)
 
 
@@ -159,6 +161,11 @@ _MASK_FN: Dict[str, Callable[[re.Match[str]], str]] = {
 # ============================================================================
 # Core cleaning functions
 # ============================================================================
+_PII_CANDIDATE_RE = re.compile(r'[@0-9+]|http|www\.', re.IGNORECASE)
+_CONTROL_CHAR_RE = re.compile(r'[\x00-\x1F\x7F-\x9F]')
+_WHITESPACE_RE = re.compile(r'\s+')
+
+
 def redact_pii(text: str, mask: bool = False) -> Tuple[str, bool]:
     """Redact or mask PII in text.
 
@@ -169,6 +176,9 @@ def redact_pii(text: str, mask: bool = False) -> Tuple[str, bool]:
     Returns:
         Tuple of (cleaned_text, pii_was_found).
     """
+    if not _PII_CANDIDATE_RE.search(text):
+        return text, False
+
     pii_found = False
     for pattern, token, kind in _PII_PATTERNS:
         if mask and kind in _MASK_FN:
@@ -184,11 +194,14 @@ def clean_text(text: str, remove_html: bool = True) -> str:
     """Normalize unicode, strip HTML, remove control chars, collapse whitespace."""
     if not isinstance(text, str):
         return text
-    text = unicodedata.normalize('NFKC', text)
+    if not text:
+        return ""
+    if not text.isascii():
+        text = unicodedata.normalize('NFKC', text)
     if remove_html:
         text = strip_html(text)
-    text = re.sub(r'[\x00-\x1F\x7F-\x9F]', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = _CONTROL_CHAR_RE.sub(' ', text)
+    text = _WHITESPACE_RE.sub(' ', text).strip()
     return text
 
 
@@ -279,7 +292,10 @@ def check_quality(text: str, cfg: SanitizerConfig) -> Optional[str]:
         return f'low unique-word ratio ({unique_ratio:.3f} < {cfg.min_unique_ratio})'
     # ⚡ Optimization: Replace character-by-character generator expression and `ord()` calls
     # with fast, C-level encoding length check to count ASCII characters.
-    ascii_ratio = len(text.encode('ascii', errors='ignore')) / len(text)
+    if text.isascii():
+        ascii_ratio = 1.0
+    else:
+        ascii_ratio = len(text.encode('ascii', errors='ignore')) / len(text)
     if ascii_ratio < cfg.min_ascii_ratio:
         return f'low ASCII ratio ({ascii_ratio:.3f} < {cfg.min_ascii_ratio})'
     return None
