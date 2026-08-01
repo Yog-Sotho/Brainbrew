@@ -211,6 +211,31 @@ class TestHfTokenAndRepoSecurity:
         with pytest.raises(ValidationError, match="hf_repo is required when publish_dataset is enabled"):
             DistillationConfig(teacher_model="gpt-4o", publish_dataset=True, hf_repo=None)
 
+    @pytest.mark.parametrize("path_traversal_repo", [
+        "user/..",
+        "user/../repo",
+        "../repo",
+        "user/..repo",
+    ])
+    def test_hf_repo_validation_rejects_path_traversal(self, path_traversal_repo):
+        from config import DistillationConfig
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="Cannot contain path traversal sequences"):
+            DistillationConfig(teacher_model="gpt-4o", hf_repo=path_traversal_repo)
+
+    @pytest.mark.parametrize("path_traversal_repo", [
+        "user/..",
+        "user/../repo",
+        "../repo",
+        "user/..repo",
+    ])
+    def test_publisher_rejects_path_traversal(self, path_traversal_repo, monkeypatch):
+        from publish.hf_publisher import publish_dataset
+        # Monkeypatch env var to avoid missing token error
+        monkeypatch.setenv("HF_TOKEN", "mock_token")
+        with pytest.raises(ValueError, match="Cannot contain path traversal sequences"):
+            publish_dataset(dataset_path="mock.jsonl", repo_name=path_traversal_repo)
+
 
 # ---------------------------------------------------------------------------
 # S-04 — Secrets and Model Names Validation Security Checks
