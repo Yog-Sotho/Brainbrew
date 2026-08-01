@@ -73,6 +73,8 @@ def strip_html(text: str) -> str:
 # ============================================================================
 # PII patterns + masking (from Sanitizer v2.8 §1.7)
 # ============================================================================
+_PII_CANDIDATE_RE = re.compile(r'[@0-9+]|http|www\.', re.IGNORECASE)
+
 _PII_PATTERNS: List[Tuple[re.Pattern[str], str, str]] = [
     (
         re.compile(
@@ -169,6 +171,11 @@ def redact_pii(text: str, mask: bool = False) -> Tuple[str, bool]:
     Returns:
         Tuple of (cleaned_text, pii_was_found).
     """
+    # ⚡ Optimization: Pre-check if any potential PII indicator exists in the text
+    # to avoid running all 8 complex regex compilations/searches unnecessarily.
+    if not _PII_CANDIDATE_RE.search(text):
+        return text, False
+
     pii_found = False
     for pattern, token, kind in _PII_PATTERNS:
         if mask and kind in _MASK_FN:
