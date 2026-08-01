@@ -299,6 +299,16 @@ class TestInputValidationSecurity:
         with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain path traversal sequences"):
             DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints/../secret")
 
+        # Verify absolute Unix paths are rejected
+        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain path traversal sequences or absolute local paths"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="/etc/passwd")
+
+        # Verify absolute Windows paths are rejected
+        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain path traversal sequences or absolute local paths"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="\\Windows\\System32")
+        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain path traversal sequences or absolute local paths"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="C:\\Windows\\System32")
+
         # Verify excessive length is rejected
         with pytest.raises(ValidationError, match="Checkpoint directory path exceeds maximum allowed length"):
             DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="a" * 513)
