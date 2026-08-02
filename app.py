@@ -4,6 +4,7 @@ Brainbrew — Streamlit UI for synthetic dataset generation.
 This is the main entry point for the application. Run with:
     streamlit run app.py
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,11 @@ st.caption("Production-grade synthetic dataset generator — GPU edition")
 
 with st.sidebar:
     st.header("⚙️ Advanced Settings")
-    use_vllm: bool = st.checkbox("Use vLLM (GPU required)", value=True)
+    use_vllm: bool = st.checkbox(
+        "Use vLLM (GPU required)",
+        value=True,
+        help="Enable local high-speed inference via vLLM. Requires a compatible NVIDIA GPU; if disabled, falls back to the OpenAI API.",
+    )
 
     openai_env_key = os.getenv("OPENAI_API_KEY", "")
     openai_key: str = st.text_input(
@@ -101,10 +106,9 @@ quality_label: str = st.selectbox(
     "Quality Mode",
     options=list(QUALITY_MODE_LABELS.values()),
     index=1,
+    help="Configure the depth of evolutionary iterations (Evol-Instruct). Balanced is recommended for most datasets.",
 )
-quality_mode: str = next(
-    k.value for k, v in QUALITY_MODE_LABELS.items() if v == quality_label
-)
+quality_mode: str = next(k.value for k, v in QUALITY_MODE_LABELS.items() if v == quality_label)
 
 # Enhancement 6: output format selector
 format_label: str = st.selectbox(
@@ -113,13 +117,25 @@ format_label: str = st.selectbox(
     index=0,
     help="Choose the dataset format your training framework expects.",
 )
-output_format: str = next(
-    k.value for k, v in OUTPUT_FORMAT_LABELS.items() if v == format_label
-)
+output_format: str = next(k.value for k, v in OUTPUT_FORMAT_LABELS.items() if v == format_label)
 
-dataset_size: int = st.slider("Target Dataset Size", 500, 20000, 2000)
-train_model: bool = st.checkbox("Auto-train LoRA adapter", value=False)
-publish: bool = st.checkbox("Publish to Hugging Face", value=False)
+dataset_size: int = st.slider(
+    "Target Dataset Size",
+    500,
+    20000,
+    2000,
+    help="Select the target number of synthetic instruction-response pairs to generate from your documents.",
+)
+train_model: bool = st.checkbox(
+    "Auto-train LoRA adapter",
+    value=False,
+    help="Automatically fine-tune a LoRA adapter on your synthesized dataset using Unsloth (requires local GPU).",
+)
+publish: bool = st.checkbox(
+    "Publish to Hugging Face",
+    value=False,
+    help="Push your completed dataset directly to the Hugging Face Hub (requires a Hugging Face write token).",
+)
 
 # Editable HF repo name
 hf_repo_name: str | None = None
@@ -135,13 +151,14 @@ uploaded_files = st.file_uploader(
     "Upload documents (PDF/TXT)",
     type=["pdf", "txt"],
     accept_multiple_files=True,
+    help="Upload your reference PDF or TXT documents. Brainbrew will chunk and synthesize instruction pairs from them.",
 )
 
 # ── File safety ──────────────────────────────────────────────────────────────
 
 _SAFE_FILENAME_RE = re.compile(r"^[\w\-. ]+$")
-MAX_WARN_BYTES: int = 10 * 1024 * 1024   # warn at 10 MB
-MAX_HARD_BYTES: int = 50 * 1024 * 1024   # hard limit at 50 MB per file
+MAX_WARN_BYTES: int = 10 * 1024 * 1024  # warn at 10 MB
+MAX_HARD_BYTES: int = 50 * 1024 * 1024  # hard limit at 50 MB per file
 
 if uploaded_files:
     total_bytes: int = sum(getattr(f, "size", 0) or 0 for f in uploaded_files)
@@ -158,11 +175,11 @@ if uploaded_files:
 # Pricing as of March 2026 (USD per 1M tokens, blended input+output estimate)
 # Source: https://openai.com/api/pricing/
 _MODEL_PRICING: dict[str, float] = {
-    "gpt-4o":         8.00,    # $2.50 input + $10 output per 1M
-    "gpt-4o-mini":    0.50,    # $0.15 input + $0.60 output per 1M
-    "gpt-4.1":        6.50,    # $2.00 input + $8.00 output per 1M
-    "gpt-4.1-mini":   0.35,    # $0.10 input + $0.40 output per 1M
-    "gpt-3.5-turbo":  1.00,    # legacy pricing estimate
+    "gpt-4o": 8.00,  # $2.50 input + $10 output per 1M
+    "gpt-4o-mini": 0.50,  # $0.15 input + $0.60 output per 1M
+    "gpt-4.1": 6.50,  # $2.00 input + $8.00 output per 1M
+    "gpt-4.1-mini": 0.35,  # $0.10 input + $0.40 output per 1M
+    "gpt-3.5-turbo": 1.00,  # legacy pricing estimate
 }
 _DEFAULT_COST_PER_M: float = 8.00  # conservative default for unknown models
 
@@ -238,7 +255,9 @@ if publish:
     else:
         _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
         if not _REPO_NAME_RE.match(hf_repo_name.strip()):
-            validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
+            validation_errors.append(
+                "Hugging Face repository format is invalid (must be 'username/repo-slug')."
+            )
 
 if validation_errors:
     st.error(
@@ -278,6 +297,7 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                 try:
                     if uploaded.type == "application/pdf":
                         from pdfminer.high_level import extract_text
+
                         content: str = extract_text(uploaded)
                     else:
                         content = uploaded.read().decode("utf-8")
@@ -308,14 +328,14 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
         status = st.empty()
 
         _STAGE_LABELS: dict[int, str] = {
-            5:   "📄 Reading document…",
-            15:  "✂️  Chunking text…",
-            20:  "🤖 Initialising model…",
-            70:  "⚗️  Running pipeline… (this is the long part)",
-            80:  "💾 Exporting dataset…",
-            85:  "🧹 Sanitizing dataset…",
-            92:  "🎯 Training LoRA adapter…",
-            96:  "🚀 Publishing to Hugging Face…",
+            5: "📄 Reading document…",
+            15: "✂️  Chunking text…",
+            20: "🤖 Initialising model…",
+            70: "⚗️  Running pipeline… (this is the long part)",
+            80: "💾 Exporting dataset…",
+            85: "🧹 Sanitizing dataset…",
+            92: "🎯 Training LoRA adapter…",
+            96: "🚀 Publishing to Hugging Face…",
             100: "✅ Done!",
         }
 
@@ -326,9 +346,7 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                 status.caption(label)
 
         try:
-            final_path: Path = run_distillation(
-                cfg, source_path, _on_progress, output_dir=tmp_path
-            )
+            final_path: Path = run_distillation(cfg, source_path, _on_progress, output_dir=tmp_path)
             st.success("✅ Dataset generated!")
             st.toast("🎉 Synthetic dataset generated successfully!", icon="🧠")
             status.empty()
@@ -338,8 +356,11 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
             grade = quality_report["grade"]
 
             grade_colors = {
-                "SUPER": "🟢", "GOOD": "🔵", "NORMAL": "🟡",
-                "BAD": "🟠", "DISASTER": "🔴",
+                "SUPER": "🟢",
+                "GOOD": "🔵",
+                "NORMAL": "🟡",
+                "BAD": "🟠",
+                "DISASTER": "🔴",
             }
             grade_emoji = grade_colors.get(grade, "⚪")
 
@@ -387,6 +408,7 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                     "📥 Download dataset",
                     f.read(),
                     file_name=final_path.name,
+                    help="Save the generated and formatted JSONL dataset file to your local computer.",
                 )
 
             if cfg.publish_dataset:
