@@ -10,7 +10,6 @@ Both return a list of non-empty text chunks suitable for prompt generation.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 

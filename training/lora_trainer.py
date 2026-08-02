@@ -8,8 +8,6 @@ when called on a GPU machine.
 """
 from __future__ import annotations
 
-from typing import Any
-
 
 # ── FIX C-03: formatting function for proper instruction+output training ────
 def _format_alpaca(examples: dict[str, list[str]], eos_token: str = "</s>") -> dict[str, list[str]]:

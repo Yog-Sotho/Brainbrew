@@ -12,13 +12,12 @@ import pytest
 from pydantic import ValidationError
 
 from config import (
+    OUTPUT_FORMAT_LABELS,
+    QUALITY_MODE_LABELS,
     DistillationConfig,
     OutputFormat,
     QualityMode,
-    QUALITY_MODE_LABELS,
-    OUTPUT_FORMAT_LABELS,
 )
-
 
 # ── QualityMode ───────────────────────────────────────────────────────────────
 
