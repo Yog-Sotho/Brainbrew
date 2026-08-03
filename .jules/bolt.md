@@ -21,3 +21,10 @@ Critical performance-related learnings specific to this codebase's architecture.
 In the dataset sanitization pipeline, the PII redaction step `redact_pii` ran all 8 complex regex substitution patterns sequentially on every record field regardless of whether any PII actually existed. This caused massive redundant C-level regex loop traversals for clean data (which represents 95%+ of typical distillation datasets). We discovered that applying a fast, unified single-regex precheck `_PII_CANDIDATE_RE = re.compile(r'[@0-9+]|http|www\.', re.IGNORECASE)` to perform a single `.search()` check can bypass the 8 costly `subn` operations entirely for clean records. This yields a massive ~8x speedup on clean text, making the dataset sanitization significantly more efficient. We also noted that case-insensitivity checks with `re.IGNORECASE` have some overhead, but are mathematically required here to safely cover all variations of URL indicators.
 
 **Action:** Before running an expensive series of sequential regex substitutions/modifications on strings, always implement a single-pass, cheap regex/substring precheck to exit early if no work is needed.
+
+## 2026-04-02 - [C-level Sliding Windows for N-grams and Avoiding Cryptographic Hash Overhead]
+**Learning:**
+1. Generating character n-grams/shingles by looping and slicing in Python (e.g. `{text[i : i+n] for i in range(...)}`) incurs high interpreter overhead. Offloading the sliding window generation to C-level zip and map functions via `set(map("".join, zip(*(text[i:] for i in range(n)))))` is ~30-40% faster.
+2. Exact deduplication checks in hot loops should avoid cryptographic hashing (like SHA-256) entirely. Since python string hashes are C-optimized, extremely fast, and guaranteed to be stable during runtime, storing and looking up raw plain string keys in sets/dicts is nearly 10x faster than encoding, hashing, and hex-digesting with `hashlib.sha256`.
+
+**Action:** Prefer C-level zip-slicing and mapping for sliding window operations on strings. Always use python raw strings directly in sets for deduplication keys inside loops rather than computing heavy cryptographic hashes.
