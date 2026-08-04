@@ -39,7 +39,11 @@ st.caption("Production-grade synthetic dataset generator — GPU edition")
 
 with st.sidebar:
     st.header("⚙️ Advanced Settings")
-    use_vllm: bool = st.checkbox("Use vLLM (GPU required)", value=True)
+    use_vllm: bool = st.checkbox(
+        "Use vLLM (GPU required)",
+        value=True,
+        help="Enable local high-speed model inference using vLLM (requires a GPU with CUDA support).",
+    )
 
     openai_env_key = os.getenv("OPENAI_API_KEY", "")
     openai_key: str = st.text_input(
@@ -101,6 +105,7 @@ quality_label: str = st.selectbox(
     "Quality Mode",
     options=list(QUALITY_MODE_LABELS.values()),
     index=1,
+    help="Select the Evolution complexity: Fast (1 step), Balanced (2 steps), or Research (3 steps) to control prompt diversity and quality.",
 )
 quality_mode: str = next(
     k.value for k, v in QUALITY_MODE_LABELS.items() if v == quality_label
@@ -117,9 +122,23 @@ output_format: str = next(
     k.value for k, v in OUTPUT_FORMAT_LABELS.items() if v == format_label
 )
 
-dataset_size: int = st.slider("Target Dataset Size", 500, 20000, 2000)
-train_model: bool = st.checkbox("Auto-train LoRA adapter", value=False)
-publish: bool = st.checkbox("Publish to Hugging Face", value=False)
+dataset_size: int = st.slider(
+    "Target Dataset Size",
+    500,
+    20000,
+    2000,
+    help="The target number of instruction-response synthetic Q&A pairs to generate.",
+)
+train_model: bool = st.checkbox(
+    "Auto-train LoRA adapter",
+    value=False,
+    help="Enable auto-training of a LoRA adapter on your generated dataset with Unsloth.",
+)
+publish: bool = st.checkbox(
+    "Publish to Hugging Face",
+    value=False,
+    help="Publish the generated dataset automatically to the Hugging Face Hub under your repository.",
+)
 
 # Editable HF repo name
 hf_repo_name: str | None = None
@@ -135,6 +154,7 @@ uploaded_files = st.file_uploader(
     "Upload documents (PDF/TXT)",
     type=["pdf", "txt"],
     accept_multiple_files=True,
+    help="Upload source PDF or TXT documents. These will be parsed and chunked to construct the synthetic training dataset.",
 )
 
 # ── File safety ──────────────────────────────────────────────────────────────
@@ -250,6 +270,7 @@ if validation_errors:
 else:
     button_disabled = False
     button_help = "Click to start the synthetic dataset distillation pipeline."
+    st.success("✨ **Ready to brew!** All inputs are valid and we are good to go.")
 
 # ── Generate button ──────────────────────────────────────────────────────────
 
@@ -387,6 +408,7 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                     "📥 Download dataset",
                     f.read(),
                     file_name=final_path.name,
+                    help="Click to download the complete synthetic dataset to your local machine.",
                 )
 
             if cfg.publish_dataset:
