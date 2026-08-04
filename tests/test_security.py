@@ -273,6 +273,8 @@ class TestInputValidationSecurity:
         "/absolute/path",
         "\\windows\\path",
         "some_model/../other",
+        "C:/absolute/path",
+        "D:\\absolute\\path",
     ])
     def test_model_names_path_traversal(self, bad_name):
         from config import DistillationConfig
@@ -323,6 +325,14 @@ class TestInputValidationSecurity:
         # Verify path traversal is rejected
         with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain path traversal sequences"):
             DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints/../secret")
+
+        # Verify absolute Unix path is rejected
+        with pytest.raises(ValidationError, match="Checkpoint directory path cannot be an absolute local path"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="/var/log")
+
+        # Verify absolute Windows path is rejected
+        with pytest.raises(ValidationError, match="Checkpoint directory path cannot be an absolute local path"):
+            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="C:\\Users\\admin")
 
         # Verify excessive length is rejected
         with pytest.raises(ValidationError, match="Checkpoint directory path exceeds maximum allowed length"):
