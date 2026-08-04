@@ -96,7 +96,7 @@ class DistillationConfig(BaseModel):
             raise ValueError("Model name is required")
         if len(v_stripped) > 255:
             raise ValueError("Model name exceeds maximum allowed length of 255 characters.")
-        if ".." in v_stripped or v_stripped.startswith("/") or v_stripped.startswith("\\"):
+        if ".." in v_stripped or v_stripped.startswith("/") or v_stripped.startswith("\\") or re.match(r"^[a-zA-Z]:", v_stripped):
             raise ValueError("Model name cannot contain path traversal or absolute local paths.")
         if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", v_stripped):
             raise ValueError("Model name contains invalid characters.")
@@ -113,6 +113,8 @@ class DistillationConfig(BaseModel):
                 raise ValueError("Checkpoint directory path exceeds maximum allowed length of 512 characters.")
             if ".." in v_stripped:
                 raise ValueError("Checkpoint directory path cannot contain path traversal sequences ('..').")
+            if v_stripped.startswith("/") or v_stripped.startswith("\\") or re.match(r"^[a-zA-Z]:", v_stripped):
+                raise ValueError("Checkpoint directory path cannot be an absolute local path.")
             if any(ord(c) < 32 or ord(c) > 126 for c in v_stripped):
                 raise ValueError("Checkpoint directory path contains invalid or control characters.")
             return v_stripped
