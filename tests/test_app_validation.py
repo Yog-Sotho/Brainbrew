@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 
 def validate_inputs(
     uploaded_files,
@@ -56,9 +58,13 @@ def validate_inputs(
         if not hf_repo_name or not hf_repo_name.strip():
             validation_errors.append("Hugging Face repository name is required when publishing.")
         else:
-            _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
-            if not _REPO_NAME_RE.match(hf_repo_name.strip()):
-                validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
+            repo_stripped = hf_repo_name.strip()
+            if ".." in repo_stripped:
+                validation_errors.append("Hugging Face repository name cannot contain path traversal sequences ('..').")
+            else:
+                _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
+                if not _REPO_NAME_RE.match(repo_stripped):
+                    validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
 
     return validation_errors
 
@@ -203,3 +209,23 @@ def test_validation_oversized_file():
     )
     assert oversized_file.seek_called
     assert "File 'very_large.txt' exceeds the 50 MB hard size limit" in errors[0]
+
+
+@pytest.mark.parametrize("path_traversal_repo", [
+    "user/..",
+    "user/../repo",
+    "../repo",
+    "user/..repo",
+])
+def test_validation_rejects_path_traversal_in_repo_name(path_traversal_repo):
+    errors = validate_inputs(
+        uploaded_files=["doc1.txt"],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=True,
+        hf_token="hf-123",
+        env_hf_token=None,
+        hf_repo_name=path_traversal_repo,
+    )
+    assert any("path traversal sequences" in err for err in errors)

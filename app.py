@@ -236,9 +236,13 @@ if publish:
     if not hf_repo_name or not hf_repo_name.strip():
         validation_errors.append("Hugging Face repository name is required when publishing.")
     else:
-        _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
-        if not _REPO_NAME_RE.match(hf_repo_name.strip()):
-            validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
+        repo_stripped = hf_repo_name.strip()
+        if ".." in repo_stripped:
+            validation_errors.append("Hugging Face repository name cannot contain path traversal sequences ('..').")
+        else:
+            _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
+            if not _REPO_NAME_RE.match(repo_stripped):
+                validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
 
 if validation_errors:
     st.error(
