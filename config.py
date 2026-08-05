@@ -7,21 +7,20 @@ QUALITY_MODE_LABELS (friendly display names for the Streamlit UI), and OutputFor
 """
 from __future__ import annotations
 
-from enum import Enum
 import re
-from typing import Optional
+from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ValidationInfo
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
-class QualityMode(str, Enum):
+class QualityMode(StrEnum):
     """Controls the depth of Evol-Instruct evolution passes."""
     FAST = "fast"
     BALANCED = "balanced"
     RESEARCH = "research"
 
 
-class OutputFormat(str, Enum):
+class OutputFormat(StrEnum):
     """Supported dataset export formats."""
     ALPACA = "alpaca"
     SHAREGPT = "sharegpt"
@@ -48,7 +47,7 @@ class DistillationConfig(BaseModel):
     """Type-safe, validated pipeline configuration."""
 
     teacher_model: str = Field(..., description="Model name or comma-separated list for multi-model ensemble")
-    judge_model: Optional[str] = "gpt-4o-mini"
+    judge_model: str | None = "gpt-4o-mini"
     dataset_size: int = Field(2000, ge=100, le=50000)
     quality_mode: QualityMode = QualityMode.BALANCED
     output_format: OutputFormat = OutputFormat.ALPACA
@@ -56,21 +55,21 @@ class DistillationConfig(BaseModel):
     train_model: bool = False
     base_model: str = "unsloth/mistral-7b-bnb-4bit"
     publish_dataset: bool = False
-    hf_repo: Optional[str] = None
+    hf_repo: str | None = None
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     max_new_tokens: int = Field(2048, ge=128)
     batch_size: int = Field(64, ge=1)
     lora_rank: int = Field(16, ge=8)
-    api_key: Optional[str] = None
-    hf_token: Optional[str] = None
+    api_key: str | None = None
+    hf_token: str | None = None
     use_semantic_chunking: bool = False
     enable_dedup: bool = True
-    checkpoint_dir: Optional[str] = None
+    checkpoint_dir: str | None = None
     sanitize_dataset: bool = False
 
     @field_validator("api_key", "hf_token")
     @classmethod
-    def validate_secrets(cls, v: Optional[str]) -> Optional[str]:
+    def validate_secrets(cls, v: str | None) -> str | None:
         if v is not None:
             v_stripped = v.strip()
             if not v_stripped:
@@ -84,7 +83,7 @@ class DistillationConfig(BaseModel):
 
     @field_validator("teacher_model", "base_model", "judge_model")
     @classmethod
-    def validate_model_names(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+    def validate_model_names(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
             if info.field_name == "teacher_model":
                 raise ValueError("Teacher model is required")
@@ -96,7 +95,14 @@ class DistillationConfig(BaseModel):
             raise ValueError("Model name is required")
         if len(v_stripped) > 255:
             raise ValueError("Model name exceeds maximum allowed length of 255 characters.")
-        if ".." in v_stripped or v_stripped.startswith("/") or v_stripped.startswith("\\"):
+        # Ensure we block Unix-style absolute paths, Windows-style backslash absolute paths,
+        # or Windows drive-letter configurations (e.g. C:/ or D:\).
+        is_absolute = (
+            v_stripped.startswith("/")
+            or v_stripped.startswith("\\")
+            or bool(re.match(r"^[a-zA-Z]:", v_stripped))
+        )
+        if ".." in v_stripped or is_absolute:
             raise ValueError("Model name cannot contain path traversal or absolute local paths.")
         if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", v_stripped):
             raise ValueError("Model name contains invalid characters.")
@@ -104,7 +110,7 @@ class DistillationConfig(BaseModel):
 
     @field_validator("checkpoint_dir")
     @classmethod
-    def validate_checkpoint_dir(cls, v: Optional[str]) -> Optional[str]:
+    def validate_checkpoint_dir(cls, v: str | None) -> str | None:
         if v is not None:
             v_stripped = v.strip()
             if not v_stripped:
@@ -120,7 +126,7 @@ class DistillationConfig(BaseModel):
 
     @field_validator("hf_repo")
     @classmethod
-    def validate_hf_repo(cls, v: Optional[str]) -> Optional[str]:
+    def validate_hf_repo(cls, v: str | None) -> str | None:
         if v is not None:
             v_stripped = v.strip()
             if not v_stripped:
@@ -141,9 +147,8 @@ class DistillationConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_publish_config(self) -> DistillationConfig:
-        if self.publish_dataset:
-            if not self.hf_repo or not self.hf_repo.strip():
-                raise ValueError("hf_repo is required when publish_dataset is enabled")
+        if self.publish_dataset and (not self.hf_repo or not self.hf_repo.strip()):
+            raise ValueError("hf_repo is required when publish_dataset is enabled")
         return self
 
     # ── FIX C-01: safe serialisation that never leaks secrets ────────────
