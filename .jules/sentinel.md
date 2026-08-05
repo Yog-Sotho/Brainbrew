@@ -12,3 +12,8 @@
 **Vulnerability:** Loose validation regex for Hugging Face repository names (`^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`) successfully matched sequences containing double dots (`..`), such as `user/..` or `user/../repo`. If resolved or used inside caching/file system interactions, this would allow malicious actors to perform directory traversal attacks.
 **Learning:** Standard regex validation of structured repository/package identifiers often forgets to exclude directory traversal patterns like `..` when dots are permissible in names.
 **Prevention:** Explicitly block `..` sequences in repository identifiers during both configuration-time validation and publication execution steps, as defense in depth.
+
+## 2026-07-29 - Platform-Agnostic Absolute Local Path Validation in Configs
+**Vulnerability:** Absolute local path validation for model name configuration settings previously only checked for standard Unix or Windows slashes (`/` or `\\`), allowing Windows drive-letter configurations (such as `C:/absolute/path`) to be accepted as valid model names.
+**Learning:** Checking prefixes only with slash characters is insufficient for complete absolute path prevention across all environments, as Windows paths can start with drive letters (e.g. `C:`).
+**Prevention:** Always check for drive-letter patterns (`^[a-zA-Z]:`) in addition to leading slashes when validating against absolute local paths in platform-agnostic settings.
