@@ -135,6 +135,7 @@ uploaded_files = st.file_uploader(
     "Upload documents (PDF/TXT)",
     type=["pdf", "txt"],
     accept_multiple_files=True,
+    help="Upload PDF or TXT documents. These documents will be split, chunked, and processed as source knowledge to generate synthetic dataset pairs.",
 )
 
 # ── File safety ──────────────────────────────────────────────────────────────
@@ -361,22 +362,28 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                             st.markdown(f"**Example {i}**")
                             # Handle different output formats
                             if "instruction" in row:
-                                st.markdown(f"*Instruction:* {row['instruction']}")
+                                inst_text = row.get("instruction", "")
+                                with st.chat_message("user"):
+                                    st.markdown(inst_text[:1000] + ("…" if len(inst_text) > 1000 else ""))
                                 output_text = row.get("output", "")
-                                st.markdown(
-                                    f"*Output:* {output_text[:300]}"
-                                    f"{'…' if len(output_text) > 300 else ''}"
-                                )
+                                with st.chat_message("assistant"):
+                                    st.markdown(output_text[:1000] + ("…" if len(output_text) > 1000 else ""))
                             elif "messages" in row:
                                 for msg in row["messages"]:
                                     role = msg.get("role", "unknown")
                                     content = msg.get("content", "")
-                                    st.markdown(f"*{role}:* {content[:200]}")
+                                    mapped_role = "user" if role.lower() == "user" else ("assistant" if role.lower() == "assistant" else "user")
+                                    with st.chat_message(mapped_role):
+                                        st.markdown(f"**{role.capitalize()}**")
+                                        st.markdown(content[:1000] + ("…" if len(content) > 1000 else ""))
                             elif "conversations" in row:
                                 for turn in row["conversations"]:
                                     who = turn.get("from", "unknown")
                                     val = turn.get("value", "")
-                                    st.markdown(f"*{who}:* {val[:200]}")
+                                    mapped_role = "user" if who.lower() in ("human", "user") else ("assistant" if who.lower() in ("gpt", "assistant") else "user")
+                                    with st.chat_message(mapped_role):
+                                        st.markdown(f"**{who.capitalize()}**")
+                                        st.markdown(val[:1000] + ("…" if len(val) > 1000 else ""))
                             st.divider()
             except Exception:
                 logger.debug("Preview rendering failed", exc_info=True)
@@ -387,6 +394,8 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                     "📥 Download dataset",
                     f.read(),
                     file_name=final_path.name,
+                    help="Click to save the generated synthetic dataset to your local machine.",
+                    use_container_width=True,
                 )
 
             if cfg.publish_dataset:
