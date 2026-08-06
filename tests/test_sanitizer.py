@@ -9,19 +9,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import pytest
 
 from pipeline.sanitizer import (
     SanitizerConfig,
-    SanitizeStats,
-    strip_html,
-    redact_pii,
-    clean_text,
-    check_quality,
-    get_record_hash,
-    sanitize_record,
-    sanitize_dataset,
     _sanitize_record_internal,
+    check_quality,
+    clean_text,
+    get_record_hash,
+    redact_pii,
+    sanitize_dataset,
+    sanitize_record,
+    strip_html,
 )
 
 
@@ -155,7 +153,7 @@ def test_sanitize_dataset(tmp_path: Path):
     assert stats.pii_redacted == 1
 
     # Verify output content
-    with open(output_file, "r", encoding="utf-8") as f:
+    with open(output_file, encoding="utf-8") as f:
         output_records = [json.loads(line) for line in f]
 
     assert len(output_records) == 2

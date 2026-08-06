@@ -12,3 +12,8 @@
 **Vulnerability:** Loose validation regex for Hugging Face repository names (`^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`) successfully matched sequences containing double dots (`..`), such as `user/..` or `user/../repo`. If resolved or used inside caching/file system interactions, this would allow malicious actors to perform directory traversal attacks.
 **Learning:** Standard regex validation of structured repository/package identifiers often forgets to exclude directory traversal patterns like `..` when dots are permissible in names.
 **Prevention:** Explicitly block `..` sequences in repository identifiers during both configuration-time validation and publication execution steps, as defense in depth.
+
+## 2026-07-29 - Multi-Model Configuration Path Traversal Validation Bypass
+**Vulnerability:** Although single model names were validated against path traversal (`..`) and absolute local paths, the comma-separated multi-model ensemble `teacher_model` configuration failed to validate each model name in the list individually. This allowed malicious local path or file inclusion bypasses (e.g., `gpt-4o, /etc/passwd`).
+**Learning:** Checking security constraints (such as `startswith` or `in` checks) on raw, multi-value container strings can be bypassed if the values are evaluated individually at execution time.
+**Prevention:** Always split and individually validate each element of multi-value configuration strings (like comma-separated lists) against path traversal, absolute local path, or other file execution boundaries.

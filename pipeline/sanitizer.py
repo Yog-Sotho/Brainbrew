@@ -18,9 +18,10 @@ import json
 import logging
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class SanitizerConfig:
     min_words: int = 8
     min_unique_ratio: float = 0.25
     min_ascii_ratio: float = 0.85
-    require_fields: List[str] = field(default_factory=lambda: ["instruction", "output"])
+    require_fields: list[str] = field(default_factory=lambda: ["instruction", "output"])
     max_depth: int = 100
 
 
@@ -75,7 +76,7 @@ def strip_html(text: str) -> str:
 # ============================================================================
 _PII_CANDIDATE_RE = re.compile(r'[@0-9+]|http|www\.', re.IGNORECASE)
 
-_PII_PATTERNS: List[Tuple[re.Pattern[str], str, str]] = [
+_PII_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
     (
         re.compile(
             r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b',
@@ -149,7 +150,7 @@ def _mask_ssn(m: re.Match[str]) -> str:
     return f"***-**-{_mask_last_digits(digits)}"
 
 
-_MASK_FN: Dict[str, Callable[[re.Match[str]], str]] = {
+_MASK_FN: dict[str, Callable[[re.Match[str]], str]] = {
     'email': _mask_email,
     'phone': _mask_phone,
     'card':  _mask_card,
@@ -161,7 +162,7 @@ _MASK_FN: Dict[str, Callable[[re.Match[str]], str]] = {
 # ============================================================================
 # Core cleaning functions
 # ============================================================================
-def redact_pii(text: str, mask: bool = False) -> Tuple[str, bool]:
+def redact_pii(text: str, mask: bool = False) -> tuple[str, bool]:
     """Redact or mask PII in text.
 
     Args:
@@ -204,7 +205,7 @@ def _sanitize_value(
     *,
     cfg: SanitizerConfig,
     _depth: int = 0,
-) -> Tuple[Any, bool]:
+) -> tuple[Any, bool]:
     """Recursively sanitize a value (string, dict, or list).
 
     Returns (sanitized_value, pii_was_found).
@@ -250,12 +251,12 @@ def _sanitize_value(
 _WORD_RE = re.compile(r'\b\w+\b')
 
 
-def _extract_text_for_quality(record: Dict[str, Any], max_chars: int = 8192) -> str:
+def _extract_text_for_quality(record: dict[str, Any], max_chars: int = 8192) -> str:
     """Extract text from record fields for quality scoring.
 
     Concatenates all string values up to max_chars budget.
     """
-    parts: List[str] = []
+    parts: list[str] = []
     budget = max_chars
     for v in record.values():
         if budget <= 0:
@@ -267,7 +268,7 @@ def _extract_text_for_quality(record: Dict[str, Any], max_chars: int = 8192) -> 
     return ' '.join(parts)
 
 
-def check_quality(text: str, cfg: SanitizerConfig) -> Optional[str]:
+def check_quality(text: str, cfg: SanitizerConfig) -> str | None:
     """Check text against quality gates.
 
     Returns rejection reason string, or None if text passes all gates.
@@ -295,7 +296,7 @@ def check_quality(text: str, cfg: SanitizerConfig) -> Optional[str]:
 # ============================================================================
 # Dedup hashing
 # ============================================================================
-def get_record_hash(record: Dict[str, Any], normalize: bool = True) -> str:
+def get_record_hash(record: dict[str, Any], normalize: bool = True) -> str:
     """SHA-256 hash of a record for exact deduplication.
 
     Args:
@@ -323,9 +324,9 @@ def get_record_hash(record: Dict[str, Any], normalize: bool = True) -> str:
 # Per-record sanitizer
 # ============================================================================
 def _sanitize_record_internal(
-    record: Dict[str, Any],
+    record: dict[str, Any],
     cfg: SanitizerConfig,
-) -> Tuple[Optional[Dict[str, Any]], Optional[str], bool]:
+) -> tuple[dict[str, Any] | None, str | None, bool]:
     """Internal version of sanitize_record that also returns whether PII was found."""
     if not isinstance(record, dict):
         return None, 'not a dict', False
@@ -354,9 +355,9 @@ def _sanitize_record_internal(
 
 
 def sanitize_record(
-    record: Dict[str, Any],
+    record: dict[str, Any],
     cfg: SanitizerConfig,
-) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+) -> tuple[dict[str, Any] | None, str | None]:
     """Sanitize a single record: clean, redact PII, check quality.
 
     Args:
@@ -376,7 +377,7 @@ def sanitize_record(
 def sanitize_dataset(
     input_path: Path,
     output_path: Path,
-    cfg: Optional[SanitizerConfig] = None,
+    cfg: SanitizerConfig | None = None,
 ) -> SanitizeStats:
     """Sanitize an entire JSONL dataset file.
 
@@ -395,7 +396,7 @@ def sanitize_dataset(
         cfg = SanitizerConfig()
 
     stats = SanitizeStats()
-    seen_hashes: Set[str] = set()
+    seen_hashes: set[str] = set()
 
     with open(input_path, encoding='utf-8') as fin, \
          open(output_path, 'w', encoding='utf-8') as fout:
