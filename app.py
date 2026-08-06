@@ -39,7 +39,11 @@ st.caption("Production-grade synthetic dataset generator — GPU edition")
 
 with st.sidebar:
     st.header("⚙️ Advanced Settings")
-    use_vllm: bool = st.checkbox("Use vLLM (GPU required)", value=True)
+    use_vllm: bool = st.checkbox(
+        "Use vLLM (GPU required)",
+        value=True,
+        help="Run high-performance local LLM inference using vLLM on a GPU-enabled system. If unchecked, OpenAI API is used.",
+    )
 
     openai_env_key = os.getenv("OPENAI_API_KEY", "")
     openai_key: str = st.text_input(
@@ -101,6 +105,7 @@ quality_label: str = st.selectbox(
     "Quality Mode",
     options=list(QUALITY_MODE_LABELS.values()),
     index=1,
+    help="Select the depth of evolution passes: Fast (quick test), Balanced (recommended), or Research (highest quality but slower).",
 )
 quality_mode: str = next(
     k.value for k, v in QUALITY_MODE_LABELS.items() if v == quality_label
@@ -117,9 +122,21 @@ output_format: str = next(
     k.value for k, v in OUTPUT_FORMAT_LABELS.items() if v == format_label
 )
 
-dataset_size: int = st.slider("Target Dataset Size", 500, 20000, 2000)
-train_model: bool = st.checkbox("Auto-train LoRA adapter", value=False)
-publish: bool = st.checkbox("Publish to Hugging Face", value=False)
+dataset_size: int = st.slider(
+    "Target Dataset Size",
+    500, 20000, 2000,
+    help="The total number of instruction-response pairs to generate.",
+)
+train_model: bool = st.checkbox(
+    "Auto-train LoRA adapter",
+    value=False,
+    help="Automatically run a LoRA fine-tuning session on the generated dataset using Unsloth (GPU required).",
+)
+publish: bool = st.checkbox(
+    "Publish to Hugging Face",
+    value=False,
+    help="Push the generated dataset to the Hugging Face Hub under your account.",
+)
 
 # Editable HF repo name
 hf_repo_name: str | None = None
@@ -359,24 +376,37 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                     with st.expander("👀 Preview first 5 examples", expanded=True):
                         for i, row in enumerate(preview_rows, 1):
                             st.markdown(f"**Example {i}**")
-                            # Handle different output formats
+                            # Handle different output formats using native chat messages
                             if "instruction" in row:
-                                st.markdown(f"*Instruction:* {row['instruction']}")
+                                with st.chat_message("user"):
+                                    st.markdown(row["instruction"])
                                 output_text = row.get("output", "")
-                                st.markdown(
-                                    f"*Output:* {output_text[:300]}"
-                                    f"{'…' if len(output_text) > 300 else ''}"
-                                )
+                                if output_text:
+                                    with st.chat_message("assistant"):
+                                        st.markdown(
+                                            f"{output_text[:1000]}"
+                                            f"{'…' if len(output_text) > 1000 else ''}"
+                                        )
                             elif "messages" in row:
                                 for msg in row["messages"]:
                                     role = msg.get("role", "unknown")
+                                    display_role = "assistant" if role == "system" else role
                                     content = msg.get("content", "")
-                                    st.markdown(f"*{role}:* {content[:200]}")
+                                    with st.chat_message(display_role):
+                                        st.markdown(
+                                            f"{content[:1000]}"
+                                            f"{'…' if len(content) > 1000 else ''}"
+                                        )
                             elif "conversations" in row:
                                 for turn in row["conversations"]:
                                     who = turn.get("from", "unknown")
+                                    display_role = "user" if who == "human" else ("assistant" if who == "gpt" else who)
                                     val = turn.get("value", "")
-                                    st.markdown(f"*{who}:* {val[:200]}")
+                                    with st.chat_message(display_role):
+                                        st.markdown(
+                                            f"{val[:1000]}"
+                                            f"{'…' if len(val) > 1000 else ''}"
+                                        )
                             st.divider()
             except Exception:
                 logger.debug("Preview rendering failed", exc_info=True)
