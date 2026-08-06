@@ -21,7 +21,6 @@ import pytest
 
 from pipeline.document_loader import character_chunk, semantic_chunk
 
-
 # ---------------------------------------------------------------------------
 # Input validation (shared by both functions)
 # ---------------------------------------------------------------------------

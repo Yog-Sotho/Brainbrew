@@ -1,7 +1,9 @@
-import time
 import json
+import time
 from pathlib import Path
-from pipeline.sanitizer import sanitize_dataset, SanitizerConfig
+
+from pipeline.sanitizer import SanitizerConfig, sanitize_dataset
+
 
 def run_benchmark():
     input_path = Path("tests/benchmark_input.jsonl")
