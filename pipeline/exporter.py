@@ -9,13 +9,11 @@ Supports four output formats:
 
 Also provides exact-match and near-duplicate deduplication (Enhancement 5).
 """
+
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +34,7 @@ def _read_raw_records(
     with open(input_path, encoding="utf-8") as fin:
         for line_num, line in enumerate(fin, 1):
             if line_num > max_records:
-                logger.warning(
-                    "Record limit reached (%d). Remaining lines skipped.", max_records
-                )
+                logger.warning("Record limit reached (%d). Remaining lines skipped.", max_records)
                 break
             line = line.strip()
             if not line:
@@ -52,15 +48,18 @@ def _read_raw_records(
             instruction = obj.get("instruction", "")
             if not instruction or not output:
                 continue
-            records.append({
-                "instruction": instruction,
-                "input": obj.get("input", ""),
-                "output": output,
-            })
+            records.append(
+                {
+                    "instruction": instruction,
+                    "input": obj.get("input", ""),
+                    "output": output,
+                }
+            )
     return records
 
 
 # ── Enhancement 5: Deduplication ─────────────────────────────────────────────
+
 
 def _ngram_shingles(text: str, n: int = 3) -> set[str]:
     """Return set of character n-gram shingles for Jaccard similarity."""
@@ -109,7 +108,7 @@ def deduplicate_records(
     if not records:
         return records
 
-    seen_hashes: set[str] = set()
+    seen_keys: set[str] = set()
     unique: list[dict] = []
     # Store shingles alongside their lengths for O(1) ratio pruning
     shingle_index: list[tuple[set[str], set[str], int, int]] = []
@@ -118,12 +117,11 @@ def deduplicate_records(
     min_sim = 2.0 * similarity_threshold - 1.0
 
     for rec in records:
-        # Step 1: exact hash dedup
+        # Step 1: exact hash dedup via fast O(1) plain-string lookup
         content_key = f"{rec['instruction']}|||{rec['output']}"
-        content_hash = hashlib.sha256(content_key.encode("utf-8")).hexdigest()
-        if content_hash in seen_hashes:
+        if content_key in seen_keys:
             continue
-        seen_hashes.add(content_hash)
+        seen_keys.add(content_key)
 
         # Step 2: near-duplicate via shingle Jaccard
         inst_shingles = _ngram_shingles(rec["instruction"])
@@ -137,7 +135,11 @@ def deduplicate_records(
             if len_inst == 0 or len_exist_inst == 0:
                 inst_ratio = 0.0
             else:
-                inst_ratio = (len_inst / len_exist_inst) if len_inst < len_exist_inst else (len_exist_inst / len_inst)
+                inst_ratio = (
+                    (len_inst / len_exist_inst)
+                    if len_inst < len_exist_inst
+                    else (len_exist_inst / len_inst)
+                )
             if inst_ratio < min_sim:
                 continue
 
@@ -145,7 +147,11 @@ def deduplicate_records(
             if len_out == 0 or len_exist_out == 0:
                 out_ratio = 0.0
             else:
-                out_ratio = (len_out / len_exist_out) if len_out < len_exist_out else (len_exist_out / len_out)
+                out_ratio = (
+                    (len_out / len_exist_out)
+                    if len_out < len_exist_out
+                    else (len_exist_out / len_out)
+                )
             if out_ratio < min_sim:
                 continue
 
@@ -167,11 +173,14 @@ def deduplicate_records(
 
     removed = len(records) - len(unique)
     if removed > 0:
-        logger.info("Deduplication removed %d records (%d → %d)", removed, len(records), len(unique))
+        logger.info(
+            "Deduplication removed %d records (%d → %d)", removed, len(records), len(unique)
+        )
     return unique
 
 
 # ── Format converters ────────────────────────────────────────────────────────
+
 
 def _to_alpaca(rec: dict) -> dict:
     return {
@@ -226,6 +235,7 @@ _FORMATTERS = {
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+
 def export_dataset(
     input_path: str,
     output_path: str,
@@ -248,8 +258,7 @@ def export_dataset(
     formatter = _FORMATTERS.get(output_format)
     if formatter is None:
         raise ValueError(
-            f"Unknown output format: {output_format!r}. "
-            f"Supported: {', '.join(_FORMATTERS.keys())}"
+            f"Unknown output format: {output_format!r}. Supported: {', '.join(_FORMATTERS.keys())}"
         )
 
     records = _read_raw_records(input_path, max_records=max_records)
@@ -266,6 +275,7 @@ def export_dataset(
 
 
 # ── Backward-compatible alias ────────────────────────────────────────────────
+
 
 def export_alpaca(input_path: str, output_path: str) -> None:
     """Legacy wrapper — calls export_dataset with alpaca format, no dedup."""
