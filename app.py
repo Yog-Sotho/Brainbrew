@@ -226,6 +226,41 @@ else:
                 f"({uploaded.size / 1e6:.1f} MB)."
             )
 
+# Validate teacher_model
+if not teacher_model or not teacher_model.strip():
+    validation_errors.append("Teacher Model is required.")
+else:
+    teacher_model_stripped = teacher_model.strip()
+    if len(teacher_model_stripped) > 255:
+        validation_errors.append("Teacher Model name exceeds maximum allowed length of 255 characters.")
+    if ".." in teacher_model_stripped or teacher_model_stripped.startswith("/") or teacher_model_stripped.startswith("\\"):
+        validation_errors.append("Teacher Model name cannot contain path traversal or absolute local paths.")
+    else:
+        _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-. /@,:]+$")
+        if not _MODEL_NAME_RE.match(teacher_model_stripped):
+            validation_errors.append("Teacher Model name contains invalid characters.")
+
+# Validate secret key lengths and characters
+def _validate_secret(val: str, name: str) -> str | None:
+    if not val:
+        return None
+    val_stripped = val.strip()
+    if len(val_stripped) > 512:
+        return f"{name} exceeds maximum allowed length of 512 characters."
+    if any(ord(c) < 32 or ord(c) > 126 for c in val_stripped):
+        return f"{name} contains invalid or control characters."
+    return None
+
+active_openai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
+openai_err = _validate_secret(active_openai_key, "OpenAI API Key")
+if openai_err:
+    validation_errors.append(openai_err)
+
+active_hf_token = hf_token or os.getenv("HF_TOKEN", "")
+hf_err = _validate_secret(active_hf_token, "Hugging Face Token")
+if hf_err:
+    validation_errors.append(hf_err)
+
 if not use_vllm and not openai_key and not os.getenv("OPENAI_API_KEY"):
     validation_errors.append("OpenAI API Key is required when not using vLLM.")
 
@@ -236,6 +271,8 @@ if publish:
     if not hf_repo_name or not hf_repo_name.strip():
         validation_errors.append("Hugging Face repository name is required when publishing.")
     else:
+        if ".." in hf_repo_name:
+            validation_errors.append("Hugging Face repository name cannot contain path traversal sequences ('..').")
         _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
         if not _REPO_NAME_RE.match(hf_repo_name.strip()):
             validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
