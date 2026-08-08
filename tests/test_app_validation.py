@@ -17,6 +17,7 @@ def validate_inputs(
     hf_token: str,
     env_hf_token: str | None,
     hf_repo_name: str | None,
+    teacher_model: str = "gpt-4o",
 ) -> list[str]:
     """Mirroring the validation logic in app.py to verify its behavior."""
     validation_errors = []
@@ -49,6 +50,17 @@ def validate_inputs(
     if not use_vllm and not openai_key and not env_openai_key:
         validation_errors.append("OpenAI API Key is required when not using vLLM.")
 
+    if not teacher_model or not teacher_model.strip():
+        validation_errors.append("Teacher model is required.")
+    else:
+        t_stripped = teacher_model.strip()
+        if len(t_stripped) > 255:
+            validation_errors.append("Teacher model name exceeds maximum allowed length of 255 characters.")
+        if ".." in t_stripped or t_stripped.startswith("/") or t_stripped.startswith("\\"):
+            validation_errors.append("Teacher model name cannot contain path traversal or absolute local paths.")
+        if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", t_stripped):
+            validation_errors.append("Teacher model name contains invalid characters.")
+
     if publish:
         if not hf_token and not env_hf_token:
             validation_errors.append("Hugging Face Token is required when publishing.")
@@ -56,8 +68,11 @@ def validate_inputs(
         if not hf_repo_name or not hf_repo_name.strip():
             validation_errors.append("Hugging Face repository name is required when publishing.")
         else:
+            repo_stripped = hf_repo_name.strip()
+            if ".." in repo_stripped:
+                validation_errors.append("Hugging Face repository name cannot contain path traversal sequences ('..').")
             _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
-            if not _REPO_NAME_RE.match(hf_repo_name.strip()):
+            if not _REPO_NAME_RE.match(repo_stripped):
                 validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
 
     return validation_errors
@@ -203,3 +218,75 @@ def test_validation_oversized_file():
     )
     assert oversized_file.seek_called
     assert "File 'very_large.txt' exceeds the 50 MB hard size limit" in errors[0]
+
+
+def test_validation_invalid_teacher_model():
+    # Test blank / empty teacher model
+    errors1 = validate_inputs(
+        uploaded_files=["doc1.txt"],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=False,
+        hf_token="",
+        env_hf_token=None,
+        hf_repo_name=None,
+        teacher_model="  ",
+    )
+    assert "Teacher model is required." in errors1
+
+    # Test path traversal / absolute paths
+    errors2 = validate_inputs(
+        uploaded_files=["doc1.txt"],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=False,
+        hf_token="",
+        env_hf_token=None,
+        hf_repo_name=None,
+        teacher_model="../some_model",
+    )
+    assert "Teacher model name cannot contain path traversal or absolute local paths." in errors2
+
+    # Test excessive length
+    errors3 = validate_inputs(
+        uploaded_files=["doc1.txt"],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=False,
+        hf_token="",
+        env_hf_token=None,
+        hf_repo_name=None,
+        teacher_model="a" * 256,
+    )
+    assert "Teacher model name exceeds maximum allowed length of 255 characters." in errors3
+
+    # Test invalid characters
+    errors4 = validate_inputs(
+        uploaded_files=["doc1.txt"],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=False,
+        hf_token="",
+        env_hf_token=None,
+        hf_repo_name=None,
+        teacher_model="model; rm -rf /",
+    )
+    assert "Teacher model name contains invalid characters." in errors4
+
+
+def test_validation_hf_repo_name_with_path_traversal():
+    errors = validate_inputs(
+        uploaded_files=["doc1.txt"],
+        use_vllm=True,
+        openai_key="",
+        env_openai_key=None,
+        publish=True,
+        hf_token="hf-123",
+        env_hf_token=None,
+        hf_repo_name="username/../repo",
+    )
+    assert "Hugging Face repository name cannot contain path traversal sequences ('..')." in errors

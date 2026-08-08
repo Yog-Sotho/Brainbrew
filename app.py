@@ -229,6 +229,17 @@ else:
 if not use_vllm and not openai_key and not os.getenv("OPENAI_API_KEY"):
     validation_errors.append("OpenAI API Key is required when not using vLLM.")
 
+if not teacher_model or not teacher_model.strip():
+    validation_errors.append("Teacher model is required.")
+else:
+    t_stripped = teacher_model.strip()
+    if len(t_stripped) > 255:
+        validation_errors.append("Teacher model name exceeds maximum allowed length of 255 characters.")
+    if ".." in t_stripped or t_stripped.startswith("/") or t_stripped.startswith("\\"):
+        validation_errors.append("Teacher model name cannot contain path traversal or absolute local paths.")
+    if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", t_stripped):
+        validation_errors.append("Teacher model name contains invalid characters.")
+
 if publish:
     if not hf_token and not os.getenv("HF_TOKEN"):
         validation_errors.append("Hugging Face Token is required when publishing.")
@@ -236,8 +247,11 @@ if publish:
     if not hf_repo_name or not hf_repo_name.strip():
         validation_errors.append("Hugging Face repository name is required when publishing.")
     else:
+        repo_stripped = hf_repo_name.strip()
+        if ".." in repo_stripped:
+            validation_errors.append("Hugging Face repository name cannot contain path traversal sequences ('..').")
         _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
-        if not _REPO_NAME_RE.match(hf_repo_name.strip()):
+        if not _REPO_NAME_RE.match(repo_stripped):
             validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
 
 if validation_errors:
