@@ -359,24 +359,26 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                     with st.expander("👀 Preview first 5 examples", expanded=True):
                         for i, row in enumerate(preview_rows, 1):
                             st.markdown(f"**Example {i}**")
-                            # Handle different output formats
+                            # Handle different output formats using st.chat_message for rich conversational UI
                             if "instruction" in row:
-                                st.markdown(f"*Instruction:* {row['instruction']}")
+                                with st.chat_message("user"):
+                                    st.markdown(row["instruction"])
                                 output_text = row.get("output", "")
-                                st.markdown(
-                                    f"*Output:* {output_text[:300]}"
-                                    f"{'…' if len(output_text) > 300 else ''}"
-                                )
+                                with st.chat_message("assistant"):
+                                    st.markdown(output_text)
                             elif "messages" in row:
                                 for msg in row["messages"]:
-                                    role = msg.get("role", "unknown")
-                                    content = msg.get("content", "")
-                                    st.markdown(f"*{role}:* {content[:200]}")
+                                    role = msg.get("role", "user")
+                                    clean_role = role if role in ["user", "assistant", "system"] else "user"
+                                    with st.chat_message(clean_role):
+                                        st.markdown(msg.get("content", ""))
                             elif "conversations" in row:
                                 for turn in row["conversations"]:
-                                    who = turn.get("from", "unknown")
-                                    val = turn.get("value", "")
-                                    st.markdown(f"*{who}:* {val[:200]}")
+                                    who = turn.get("from", "human")
+                                    role_map = {"human": "user", "user": "user", "gpt": "assistant", "assistant": "assistant", "system": "system"}
+                                    clean_role = role_map.get(who.lower(), "user")
+                                    with st.chat_message(clean_role):
+                                        st.markdown(turn.get("value", ""))
                             st.divider()
             except Exception:
                 logger.debug("Preview rendering failed", exc_info=True)
@@ -387,6 +389,7 @@ if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, 
                     "📥 Download dataset",
                     f.read(),
                     file_name=final_path.name,
+                    help="Click to download the generated synthetic dataset file in JSONL format.",
                 )
 
             if cfg.publish_dataset:
