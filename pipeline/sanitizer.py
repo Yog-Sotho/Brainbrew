@@ -68,6 +68,9 @@ _HTML_TAG_RE = re.compile(r'<[^>]+>')
 
 def strip_html(text: str) -> str:
     """Remove HTML/XML tags, replacing them with a single space."""
+    # ⚡ Optimization: Bypass regex substitution when no '<' exists in the text
+    if '<' not in text:
+        return text
     return _HTML_TAG_RE.sub(' ', text)
 
 
@@ -188,15 +191,21 @@ def redact_pii(text: str, mask: bool = False) -> tuple[str, bool]:
     return text, pii_found
 
 
+_CONTROL_CHAR_RE = re.compile(r'[\x00-\x1F\x7F-\x9F]')
+_WHITESPACE_RE = re.compile(r'\s+')
+
+
 def clean_text(text: str, remove_html: bool = True) -> str:
     """Normalize unicode, strip HTML, remove control chars, collapse whitespace."""
     if not isinstance(text, str):
         return text
-    text = unicodedata.normalize('NFKC', text)
+    # ⚡ Optimization: Skip unicode normalization for ASCII strings
+    if not text.isascii():
+        text = unicodedata.normalize('NFKC', text)
     if remove_html:
         text = strip_html(text)
-    text = re.sub(r'[\x00-\x1F\x7F-\x9F]', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = _CONTROL_CHAR_RE.sub(' ', text)
+    text = _WHITESPACE_RE.sub(' ', text).strip()
     return text
 
 
@@ -286,8 +295,11 @@ def check_quality(text: str, cfg: SanitizerConfig) -> str | None:
     if unique_ratio < cfg.min_unique_ratio:
         return f'low unique-word ratio ({unique_ratio:.3f} < {cfg.min_unique_ratio})'
     # ⚡ Optimization: Replace character-by-character generator expression and `ord()` calls
-    # with fast, C-level encoding length check to count ASCII characters.
-    ascii_ratio = len(text.encode('ascii', errors='ignore')) / len(text)
+    # with fast, C-level encoding length check to count ASCII characters, and bypass for pure ASCII.
+    if text.isascii():
+        ascii_ratio = 1.0
+    else:
+        ascii_ratio = len(text.encode('ascii', errors='ignore')) / len(text)
     if ascii_ratio < cfg.min_ascii_ratio:
         return f'low ASCII ratio ({ascii_ratio:.3f} < {cfg.min_ascii_ratio})'
     return None
@@ -340,7 +352,7 @@ def _sanitize_record_internal(
         v = record.get(rf)
         is_empty = (
             v is None
-            or (isinstance(v, str) and not v.strip())
+            or (isinstance(v, str) and (not v or v.isspace()))
             or (not isinstance(v, (bool, int, float)) and not v)
         )
         if is_empty:

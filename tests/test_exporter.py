@@ -12,11 +12,10 @@ from pathlib import Path
 import pytest
 
 from pipeline.exporter import (
+    deduplicate_records,
     export_alpaca,
     export_dataset,
-    deduplicate_records,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

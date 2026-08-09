@@ -12,18 +12,19 @@ import hashlib
 import json
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
-import os
-import structlog
-from distilabel.pipeline import Pipeline
-from distilabel.steps.tasks import EvolInstruct, TextGeneration
-from distilabel.steps import LoadDataFromDicts, KeepColumns
-from distilabel.steps.base import Step
-from distilabel.llms import OpenAILLM, vLLM
+from typing import Any
 
-from config import DistillationConfig, OutputFormat, QualityMode
-from pipeline.document_loader import semantic_chunk, character_chunk
+import structlog
+from distilabel.llms import OpenAILLM, vLLM
+from distilabel.pipeline import Pipeline
+from distilabel.steps import KeepColumns, LoadDataFromDicts
+from distilabel.steps.base import Step
+from distilabel.steps.tasks import EvolInstruct, TextGeneration
+
+from config import DistillationConfig, QualityMode
+from pipeline.document_loader import character_chunk, semantic_chunk
 from pipeline.exporter import export_dataset
 
 logger = structlog.get_logger(__name__)
@@ -94,7 +95,7 @@ def score_dataset(dataset_path: Path) -> dict[str, Any]:
                         records.append(json.loads(line))
                     except json.JSONDecodeError:
                         continue
-    except (OSError, IOError):
+    except OSError:
         return {
             "grade": "DISASTER",
             "record_count": 0,
@@ -155,7 +156,7 @@ def score_dataset(dataset_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Enhancement 7: Checkpoint support
 # ---------------------------------------------------------------------------
-def _load_checkpoint(checkpoint_dir: Optional[str]) -> dict[str, Any]:
+def _load_checkpoint(checkpoint_dir: str | None) -> dict[str, Any]:
     """Load checkpoint state if it exists."""
     if not checkpoint_dir:
         return {}
@@ -168,7 +169,7 @@ def _load_checkpoint(checkpoint_dir: Optional[str]) -> dict[str, Any]:
     return {}
 
 
-def _save_checkpoint(checkpoint_dir: Optional[str], state: dict[str, Any]) -> None:
+def _save_checkpoint(checkpoint_dir: str | None, state: dict[str, Any]) -> None:
     """Save checkpoint state."""
     if not checkpoint_dir:
         return
@@ -305,8 +306,8 @@ def _run_sanitizer(
 def run_distillation(
     cfg: DistillationConfig,
     source_file: Path,
-    progress_callback: Optional[Callable[[int], None]] = None,
-    output_dir: Optional[Path] = None,
+    progress_callback: Callable[[int], None] | None = None,
+    output_dir: Path | None = None,
 ) -> Path:
     """Run the full Brainbrew distillation pipeline.
 
