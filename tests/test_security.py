@@ -279,6 +279,8 @@ class TestInputValidationSecurity:
         "/absolute/path",
         "\\windows\\path",
         "some_model/../other",
+        "C:model",
+        "D:\\path",
     ])
     def test_model_names_path_traversal(self, bad_name):
         from pydantic import ValidationError
@@ -288,6 +290,19 @@ class TestInputValidationSecurity:
             DistillationConfig(teacher_model=bad_name)
         with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
             DistillationConfig(teacher_model="gpt-4o", base_model=bad_name)
+
+    @pytest.mark.parametrize("bad_multi_name", [
+        "gpt-4o, /etc/passwd",
+        "gpt-4o, C:model",
+        "gpt-4o, ../etc/passwd",
+        "gpt-4o, gpt-4o-mini, \\windows\\path",
+    ])
+    def test_multi_model_names_validation(self, bad_multi_name):
+        from pydantic import ValidationError
+
+        from config import DistillationConfig
+        with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
+            DistillationConfig(teacher_model=bad_multi_name)
 
     @pytest.mark.parametrize("invalid_name", [
         "model; rm -rf /",

@@ -95,8 +95,15 @@ class DistillationConfig(BaseModel):
             raise ValueError("Model name is required")
         if len(v_stripped) > 255:
             raise ValueError("Model name exceeds maximum allowed length of 255 characters.")
-        if ".." in v_stripped or v_stripped.startswith("/") or v_stripped.startswith("\\"):
-            raise ValueError("Model name cannot contain path traversal or absolute local paths.")
+
+        # Split and validate individual model names (e.g., for multi-model ensembles in teacher_model)
+        names = [n.strip() for n in v_stripped.split(",")] if info.field_name == "teacher_model" else [v_stripped]
+        for name in names:
+            if not name:
+                continue
+            if ".." in name or name.startswith("/") or name.startswith("\\") or re.match(r"^[a-zA-Z]:", name):
+                raise ValueError("Model name cannot contain path traversal or absolute local paths.")
+
         if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", v_stripped):
             raise ValueError("Model name contains invalid characters.")
         return v_stripped
