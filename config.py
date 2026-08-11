@@ -112,6 +112,8 @@ class DistillationConfig(BaseModel):
                 raise ValueError("Checkpoint directory path exceeds maximum allowed length of 512 characters.")
             if ".." in v_stripped:
                 raise ValueError("Checkpoint directory path cannot contain path traversal sequences ('..').")
+            if v_stripped.startswith("/") or v_stripped.startswith("\\") or (len(v_stripped) >= 2 and v_stripped[1] == ":" and v_stripped[0].isalpha()):
+                raise ValueError("Checkpoint directory path cannot contain absolute local paths.")
             if any(ord(c) < 32 or ord(c) > 126 for c in v_stripped):
                 raise ValueError("Checkpoint directory path contains invalid or control characters.")
             return v_stripped
