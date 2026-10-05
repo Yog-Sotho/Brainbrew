@@ -1,0 +1,111 @@
+# Brainbrew: Roadmap from 3/10 to ≥ 8/10
+
+Source: [`codebase_audit.md`](./codebase_audit.md) (2026-10-05). The phases are ordered by dependency. Each phase ends with acceptance criteria that can be checked mechanically. **Do not start a later phase until the current phase's gate passes.**
+
+## Target scores
+
+| Dimension | Now | After P0 | After P1 | After P2 | After P3–P4 |
+|---|---|---|---|---|---|
+| Security | 3 | 6 | 7 | 7 | **8.5** |
+| Build & Types | 1 | 7 | 8 | 8 | **9** |
+| Code Principles | 2 | 2 | 7 | 8 | **8.5** |
+| Code Quality | 5 | 5 | 6 | 7 | **8** |
+| Dependencies | 2 | 7 | 7 | 8 | **8.5** |
+| Dead Code | 5 | 7 | 8 | 8 | **9** |
+| Observability | 4 | 4 | 5 | 6 | **8** |
+| Concurrency | 4 | 4 | 5 | 6 | **8** |
+| Lifecycle | 3 | 3 | 5 | 6 | **8** |
+| **Overall** | **3.2** | ~5.0 | ~6.4 | ~7.1 | **≈ 8.4** |
+
+## Key decision: the generation engine
+
+distilabel's last release was 1.5.3 (Jan 2025), and its README says the original authors have moved on. Options:
+
+- **A. Keep distilabel 1.5.x and fix the integration.** Least work, but it pins the core to an aging library, and `distilabel.llms` is due for removal.
+- **B (recommended). A thin internal async engine over the OpenAI-compatible API.** vLLM (`vllm serve`), OpenAI, Ollama and most hosted providers expose this API. That gives one code path, real concurrency, retries (`tenacity`, already a dependency) and no mandatory GPU packages for API users. vLLM runs as a separate server process, which also fixes the concurrency and GPU-memory findings.
+- **C. NVIDIA NeMo Data Designer** (`pip install data-designer`). Mature column and judge orchestration, but a heavier dependency with its own concepts.
+
+Phase 1 fixes distilabel *in place* (option A) so the product works quickly. Phase 2 moves to option B behind the same `Generator` interface.
+
+---
+
+## Phase 0: Installable, secure baseline (about 1–2 days)
+
+| # | Task | Files |
+|---|---|---|
+| 0.1 | Stop sending server secrets to the browser. Resolve keys server-side (env / `st.secrets`), show "configured ✓", and do not pre-fill password widgets. | `app.py` |
+| 0.2 | Bind to `127.0.0.1` by default. Add an optional `st.login` (OIDC) gate when `BRAINBREW_AUTH=1`. Add `.streamlit/config.toml` with `maxUploadSize=50`. | `app.py`, `.streamlit/config.toml`, `Dockerfile` |
+| 0.3 | Packaging: put PEP 621 `dependencies` (core only) in `pyproject.toml`, add `[project.optional-dependencies] vllm=[...]`, `train=[...]`, `dev=[...]`, and run `uv lock`. Delete `setup.py`, `poetry.lock` and `old/`. Turn `requirements.txt` into an exported lock (`uv export --format requirements-txt`) or remove it. | packaging |
+| 0.4 | Upgrade to patched versions, resolved together: pdfminer.six ≥ 20251107, python-dotenv ≥ 1.2.2, langchain-text-splitters ≥ 1.1.2, datasets ≥ 5.0.1, transformers ≥ 5.10 (stable), vllm ≥ 0.30, and pydantic and openai as vllm requires. Choose unsloth and trl versions compatible with that transformers. | lock |
+| 0.5 | Dockerfile: CUDA **Ubuntu 24.04** base, a uv-managed venv, multi-stage build, `.dockerignore` (`.env*`, `.git`, `old`, `docs`, `tests`, `*.jsonl`, `.venv`), a separate slim `python:3.12` target for API-only use, and no secrets in layers. | `Dockerfile`, `.dockerignore` |
+| 0.6 | Move CI to `.github/workflows/ci.yml`. Jobs: ruff (lint + format check), mypy (pydantic plugin, all modules), pytest with a coverage gate, `pip-audit`, gitleaks, and `docker build` (API target). Add `.github/dependabot.yml` (pip + actions + docker). | `.github/` |
+| 0.7 | Fix the existing 12 ruff and 5 mypy errors. Use `StrEnum`. | various |
+
+**Gate:** `uv sync` succeeds on a clean py3.12 box; `docker build` succeeds; CI is green on a PR; pip-audit reports 0 known vulns with fixes; there is no secret in the page HTML (checked with an `AppTest`).
+
+## Phase 1: Make it correct (about 3–4 days)
+
+| # | Task |
+|---|---|
+| 1.1 | **Canonical record model.** Add `Record(instruction, input, output, meta)` (pydantic). Every stage (dedup, sanitize, score, train) works on canonical JSONL. Formatting to Alpaca, ShareGPT, ChatML or OpenAI happens only in the final `export`. This fixes the sanitizer, scorer and LoRA format bugs at the root. |
+| 1.2 | distilabel fixes: import from `distilabel.models`, use `generation_kwargs={...}`, annotate the custom step with `StepInput`/`StepOutput`, keep **`evolved_instruction`** as the instruction, and use a per-run `Pipeline(name=f"brainbrew-{run_id}")`. |
+| 1.3 | LoRA: `FastLanguageModel.get_peft_model(model, r=rank, lora_alpha=rank, target_modules=[...])`, `SFTTrainer(processing_class=tok, args=SFTConfig(...))`, `tokenizer.apply_chat_template` for messages, auto bf16/fp16, and output to `runs/<id>/adapter/` with a zip download. |
+| 1.4 | Persistent **run directory** `runs/<uuid>/` (`source.txt`, `raw.jsonl`, `dataset.<fmt>.jsonl`, `manifest.json`, `adapter/`). Keep the UI state in `st.session_state`. Use `download_button(on_click="ignore")`. |
+| 1.5 | Resume: enable distilabel `use_cache=True` on the persistent run directory with a "Resume run" button, **or** remove the feature and the README claim. No half-working version. |
+| 1.6 | One validation source: the UI builds `DistillationConfig` and renders `ValidationError`s. Remove the duplicated regexes in `app.py` and `hf_publisher.py` (import from `config`). |
+| 1.7 | Expose `temperature`, `max_new_tokens`, `batch_size` and `lora_rank` in an "Advanced" expander. Hide `judge_model` until Phase 2 implements it. |
+| 1.8 | **Tests that would have caught these bugs:** (a) a contract test that builds and runs the *real* distilabel DAG with a dummy `LLM` on CPU, asserting the instruction equals the evolved instruction; (b) a 4-format matrix for export → sanitize → score → train-format; (c) `streamlit.testing.v1.AppTest` smoke tests for `app.py`; (d) delete the mocks of non-existent APIs. |
+| 1.9 | README: remove false claims (refusal cleaning, resume, CI), fix the test count and document the extras-based install. |
+
+**Gate:** an end-to-end run against a real OpenAI-compatible endpoint (e.g. `vllm serve` with a small model, or OpenAI `gpt-4o-mini`) on a 5-page PDF produces aligned pairs in all 4 formats. The sanitizer keeps more than 0 rows in every format, the scorer gives the same grade across formats, and coverage including `app.py` is ≥ 80 %.
+
+## Phase 2: State-of-the-art generation quality (about 1–2 weeks)
+
+Each of these is supported by current practice (see Sources in the audit):
+
+| # | Task |
+|---|---|
+| 2.1 | **Engine swap (option B):** an async OpenAI-compatible client with bounded concurrency, `tenacity` retries and backoff, and structured outputs (JSON schema). vLLM becomes `vllm serve` (a sidecar container or `install.sh` launcher). distilabel becomes an optional extra or is removed. |
+| 2.2 | **Knowledge-base-anchored generation:** for each token-aware chunk, generate *k* diverse questions across a taxonomy (factual, conceptual, procedural, comparative, multi-hop across adjacent chunks). Answer each with the source chunk in context. Evol-Instruct becomes an optional complexity step with an "is it still answerable from the source?" check. |
+| 2.3 | **LLM-as-judge filtering** (finally using `judge_model`): score faithfulness to the source, helpfulness and correctness on a 1–5 rubric with a structured output, and keep rows at or above a configurable threshold. Store scores in `meta`. |
+| 2.4 | **Refusal and boilerplate filter:** pattern-based and judge-based removal of "As an AI…" answers and empty answers (this fulfils the README claim). |
+| 2.5 | **Dedup v2:** MinHash-LSH for near-duplicates (O(N)), plus optional embedding-based semantic dedup. |
+| 2.6 | **Decontamination (optional):** n-gram overlap check against common eval sets selected by the user. |
+| 2.7 | **PII v2:** Luhn and IP-context validation, a configurable URL policy, and an optional Presidio backend. |
+| 2.8 | Make "Target dataset size" real: generate until the target is reached or the source is exhausted, and show the expected yield before the run. |
+
+**Gate:** on a fixed benchmark corpus checked into `tests/fixtures/` (e.g. 3 public-domain PDFs), judge-faithfulness is ≥ 4.0 on average, the near-dup rate is < 2 %, the refusal rate is 0 and yield is within ±10 % of the target. Track these in a `bench/` script that CI runs nightly with a cheap model.
+
+## Phase 3: Operability (about 1 week)
+
+| # | Task |
+|---|---|
+| 3.1 | A background job runner (thread or process pool with one GPU slot), progress through `@st.fragment(run_every="2s")`, a cancel button and a run-history page. |
+| 3.2 | Logging configured once (structlog plus stdlib integration, JSON in containers). Per-run `manifest.json` with config (secrets redacted), models, seed, token usage, actual cost, stage timings and filter counts. |
+| 3.3 | HF publish: an auto-generated **dataset card** (provenance, models, license, filters, stats), `private=True` by default, and an optional upload of the adapter as a model repo. |
+| 3.4 | A headless CLI (`brainbrew run --config cfg.yaml docs/*.pdf`) through Typer, sharing the services layer. This makes the `pyproject` console script real. |
+
+**Gate:** two concurrent UI sessions plus a CLI run complete without GPU OOM or file clobbering; a page refresh does not lose a running job; the manifest is present for every run.
+
+## Phase 4: Hardening and polish (about 3–5 days)
+
+- `mypy --strict` on `config`, `pipeline/` and `engine/`; ruff with the `S` (bandit), `PT` and `RUF` rule sets; pre-commit.
+- Mutation testing (`mutmut`) on the sanitizer and dedup. Property tests (Hypothesis) for chunkers and formatters.
+- SBOM (`cyclonedx-py`) and image scanning (Trivy) in CI. Signed releases.
+- Replace the 13 binary PDFs in `docs/` with Markdown and a docs site, so documentation is reviewable in diffs.
+- Remove the change-log comments (`FIX C-xx`, `Enhancement N`) and move them to `CHANGELOG.md`.
+
+**Gate:** a re-run of the codebase audit scores **≥ 8.0 overall with no CRITICAL or HIGH findings open**.
+
+## Suggested PR breakdown
+
+1. `sec/secrets-auth`: 0.1 and 0.2
+2. `build/packaging-lock`: 0.3, 0.4 and 0.7
+3. `build/docker`: 0.5
+4. `ci/actions`: 0.6
+5. `fix/distilabel-integration`: 1.2 plus the contract test from 1.8a
+6. `refactor/canonical-records`: 1.1 plus the format matrix from 1.8b
+7. `fix/lora-trainer`: 1.3
+8. `feat/run-dirs-session-state`: 1.4, 1.5 and 1.7
+9. `refactor/single-validation` and `test/apptest`: 1.6 and 1.8c
+10. Phase 2 onward: one PR per numbered item.
