@@ -148,6 +148,17 @@ class ChatClient:
         response_format: dict[str, Any] | None = None,
     ) -> str:
         """One chat completion; returns the assistant text ('' if empty)."""
+        async with self._semaphore:
+            return await self._complete(messages, temperature, max_tokens, response_format)
+
+    async def _complete(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None,
+        max_tokens: int | None,
+        response_format: dict[str, Any] | None,
+    ) -> str:
+        """One request; the caller holds the concurrency semaphore."""
         kwargs: dict[str, Any] = {
             "model": self.settings.model,
             "messages": messages,
@@ -156,8 +167,7 @@ class ChatClient:
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
-        async with self._semaphore:
-            completion = await self._client.chat.completions.create(**kwargs)
+        completion = await self._client.chat.completions.create(**kwargs)
         self.usage.add(completion.usage)
         if not completion.choices:
             return ""
@@ -208,9 +218,11 @@ class ChatClient:
         temperature: float | None,
         max_tokens: int | None,
     ) -> str:
-        mode = self._caps.response_format
-        while True:
-            try:
+        # Read the capability only once a slot is free: calls queued behind the
+        # limit then use what an earlier call learned instead of retrying it.
+        async with self._semaphore:
+            while True:
+                mode = self._caps.response_format
                 if mode == "json_schema":
                     fmt: dict[str, Any] | None = {
                         "type": "json_schema",
@@ -224,19 +236,16 @@ class ChatClient:
                 else:
                     fmt = None
                     msgs = _with_schema_hint(messages, schema)
-                return await self.chat(msgs, temperature=temperature, max_tokens=max_tokens,
-                                       response_format=fmt)
-            except (BadRequestError, UnprocessableEntityError, InternalServerError) as exc:
-                if not _rejects_response_format(exc):
-                    raise
-                # The server rejected this response_format: degrade once, remember it.
-                next_mode = {"json_schema": "json_object", "json_object": "prompt"}.get(mode)
-                if next_mode is None:
-                    raise
-                async with self._caps.lock:
-                    if self._caps.response_format == mode:
-                        self._caps.response_format = next_mode
-                mode = self._caps.response_format
+                try:
+                    return await self._complete(msgs, temperature, max_tokens, fmt)
+                except (BadRequestError, UnprocessableEntityError, InternalServerError) as exc:
+                    # The server rejected this response_format: degrade once, remember it.
+                    next_mode = {"json_schema": "json_object", "json_object": "prompt"}.get(mode)
+                    if next_mode is None or not _rejects_response_format(exc):
+                        raise
+                    async with self._caps.lock:
+                        if self._caps.response_format == mode:
+                            self._caps.response_format = next_mode
 
 
 def _rejects_response_format(exc: APIStatusError) -> bool:

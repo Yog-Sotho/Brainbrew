@@ -55,6 +55,18 @@ class TestStructuredOutput:
         assert kinds == ["json_schema", "json_object", "json_object"]
         assert "JSON schema" in fake.calls[1]["messages"][0]["content"]
 
+    def test_queued_calls_use_the_learned_format(self):
+        # Calls waiting on the concurrency limit must not retry an unsupported format.
+        fake = FakeOpenAI(reject_json_schema=True)
+        client = _client(fake, concurrency=1)
+
+        async def many():
+            await asyncio.gather(*(client.chat_json(QUESTIONS, QuestionSet) for _ in range(6)))
+
+        _run(many())
+        kinds = [(c.get("response_format") or {}).get("type") for c in fake.calls]
+        assert kinds.count("json_schema") == 1 and kinds.count("json_object") == 6
+
     def test_500_naming_response_format_also_degrades(self):
         # llama-cpp-python's server rejects json_schema with a 500 validation error.
         fake = FakeOpenAI(reject_json_schema=True, reject_status=500)

@@ -139,6 +139,7 @@ Each of these is supported by current practice (see Sources in the audit):
 **Found while testing against a real server (not in the audit):**
 
 - llama-cpp-python's server rejects `response_format: json_schema` with **500**, not 400/422, so the fallback never triggered and every structured call failed. A 5xx that names `response_format` now degrades too; any other 5xx is still an outage.
+- Calls waiting on the concurrency limit had already read the response-format capability, so after the first call learned that `json_schema` is unsupported, every queued call still tried it, paying the SDK's retry backoff each time (55 failed requests where 5 were needed). The capability is now read after a slot is free.
 - A 3B teacher writes questions such as "…in the text following passage B?", which mean nothing without the prompt. Such questions are now dropped.
 - `SemanticDeduplicator` defines `__len__`, so an empty one was falsy and `if self.semantic` skipped semantic dedup entirely. Explicit `is not None` checks; a test asserts paraphrases are actually removed.
 
