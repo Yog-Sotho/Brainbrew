@@ -3,10 +3,10 @@ tests/conftest.py
 
 Shared fixtures and test helpers for the Brainbrew test suite.
 
-The suite runs against the real core libraries (distilabel, datasets,
-streamlit, ...): pipeline tests drive the real distilabel DAG with the offline
-FakeLLM in tests/fake_llm.py, so mocks cannot drift from the real APIs. A few
-core libraries get stubs only when they are not installed at all.
+The suite runs against the real core libraries (openai, datasets, streamlit,
+...): pipeline tests drive the real async engine and openai SDK against the
+in-memory model server in tests/fake_openai.py, so mocks cannot drift from the
+real APIs. A few core libraries get stubs only when they are not installed.
 """
 from __future__ import annotations
 
@@ -121,19 +121,6 @@ def large_text() -> str:
         "Pre-training on large corpora followed by fine-tuning yields strong results. "
     )
     return paragraph * 300  # ~220 chars * 300 = ~66 KB
-
-
-@pytest.fixture()
-def base_config():
-    """A minimal valid DistillationConfig with no GPU or API calls."""
-    from config import DistillationConfig, QualityMode
-    return DistillationConfig(
-        teacher_model="gpt-4o",
-        use_vllm=False,
-        quality_mode=QualityMode.FAST,
-        dataset_size=100,
-        api_key="test-key",
-    )
 
 
 @pytest.fixture()

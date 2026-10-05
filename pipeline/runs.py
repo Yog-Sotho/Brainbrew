@@ -61,6 +61,11 @@ class RunDir:
         return self.root / "records.jsonl"
 
     @property
+    def rejected(self) -> Path:
+        """Pairs the filters or the judge rejected, with the reason in meta."""
+        return self.root / "rejected.jsonl"
+
+    @property
     def manifest_path(self) -> Path:
         return self.root / "manifest.json"
 
@@ -71,10 +76,6 @@ class RunDir:
     @property
     def adapter_zip(self) -> Path:
         return self.root / "adapter.zip"
-
-    @property
-    def distilabel_cache(self) -> Path:
-        return self.root / ".distilabel"
 
     def dataset(self, output_format: str) -> Path:
         return self.root / f"dataset.{output_format}.jsonl"

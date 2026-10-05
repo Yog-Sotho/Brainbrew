@@ -46,7 +46,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - name: Mypy
-        run: uv run --locked mypy app.py config.py orchestrator.py pipeline/ publish/ training/
+        run: uv run --locked mypy app.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/
 
   test:
     runs-on: ubuntu-latest
@@ -59,8 +59,8 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-      # Core install (OpenAI-API mode). The pipeline tests run the real
-      # distilabel DAG with an offline fake LLM; LoRA training is covered by
+      # Core install. The pipeline tests run the real async engine and openai
+      # SDK against an in-memory model server; LoRA training is covered by
       # `train-contract`.
       - name: Pytest
         run: uv run --locked pytest --cov --cov-report=term-missing --cov-fail-under=80

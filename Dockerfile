@@ -2,9 +2,13 @@
 #
 # Brainbrew images, built from the locked dependency set (uv.lock).
 #
-#   docker build -t brainbrew .                         # GPU image (vLLM + LoRA training), default
-#   docker build --target api -t brainbrew-api .        # CPU / OpenAI-API-only image
+#   docker build -t brainbrew .                         # GPU image (`vllm serve` + LoRA training), default
+#   docker build --target api -t brainbrew-api .        # CPU image: any OpenAI-compatible endpoint
 #   docker build --build-arg GPU_EXTRAS=vllm -t brainbrew-vllm .    # GPU image without training
+#
+# Generation talks to an OpenAI-compatible server. compose.yaml runs the CPU
+# image next to the official vLLM server image, which is the simplest local
+# setup; the GPU image is only needed for LoRA training inside the container.
 #
 #   docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env \
 #       -v brainbrew-runs:/app/runs brainbrew
@@ -38,6 +42,7 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin app
 COPY --from=api-builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app app.py config.py orchestrator.py ./
+COPY --chown=app:app engine/ engine/
 COPY --chown=app:app pipeline/ pipeline/
 COPY --chown=app:app publish/ publish/
 COPY --chown=app:app training/ training/
@@ -85,6 +90,7 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin app
 COPY --from=gpu-builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app app.py config.py orchestrator.py ./
+COPY --chown=app:app engine/ engine/
 COPY --chown=app:app pipeline/ pipeline/
 COPY --chown=app:app publish/ publish/
 COPY --chown=app:app training/ training/

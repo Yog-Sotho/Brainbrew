@@ -18,11 +18,11 @@ import json
 import logging
 import re
 import unicodedata
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pipeline.pii import UrlPolicy, redact_pii
 from pipeline.records import Record
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ class SanitizerConfig:
     """
     remove_pii: bool = True
     pii_mask: bool = False
+    url_policy: UrlPolicy = "domain"
+    presidio: bool = False
     clean_html: bool = True
     deduplicate: bool = True
     min_chars: int = 50
@@ -77,119 +79,8 @@ def strip_html(text: str) -> str:
 
 
 # ============================================================================
-# PII patterns + masking (from Sanitizer v2.8 §1.7)
-# ============================================================================
-_PII_CANDIDATE_RE = re.compile(r'[@0-9+]|http|www\.', re.IGNORECASE)
-
-_PII_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
-    (
-        re.compile(
-            r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b',
-            re.IGNORECASE,
-        ),
-        '[PII_EMAIL]', 'email',
-    ),
-    (re.compile(r'https?://\S+', re.IGNORECASE), '[PII_URL]', 'url'),
-    (re.compile(r'www\.\S+', re.IGNORECASE), '[PII_URL]', 'url'),
-    (
-        re.compile(r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b'),
-        '[PII_PHONE]', 'phone',
-    ),
-    (
-        re.compile(
-            r'\+\d{1,3}[\s\-]?\(?\d{1,4}\)?[\s\-]?\d{1,4}[\s\-]?\d{1,9}\b'
-        ),
-        '[PII_PHONE]', 'phone',
-    ),
-    (
-        re.compile(r'\b(?:\d{4}[ \-]?){3}\d{4}\b'),
-        '[PII_CARD]', 'card',
-    ),
-    (
-        re.compile(
-            r'\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}'
-            r'(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\b'
-        ),
-        '[PII_IP]', 'ip',
-    ),
-    (re.compile(r'\b\d{3}-\d{2}-\d{4}\b'), '[PII_SSN]', 'ssn'),
-]
-
-
-def _mask_last_digits(digits: str, n: int = 4) -> str:
-    """Return last *n* digits, or '****' if fewer than *n* present."""
-    return digits[-n:] if len(digits) >= n else '*' * n
-
-
-def _mask_email(m: re.Match[str]) -> str:
-    """Mask email: keep first+last char of local part."""
-    full = m.group(0)
-    try:
-        local, domain = full.split('@', 1)
-        masked_local = '***' if len(local) <= 1 else local[0] + '***' + local[-1]
-        return f"{masked_local}@{domain}"
-    except ValueError:
-        return '[PII_EMAIL]'
-
-
-def _mask_phone(m: re.Match[str]) -> str:
-    digits = re.sub(r'\D', '', m.group(0))
-    return f"***-***-{_mask_last_digits(digits)}"
-
-
-def _mask_card(m: re.Match[str]) -> str:
-    digits = re.sub(r'\D', '', m.group(0))
-    return f"****-****-****-{_mask_last_digits(digits)}"
-
-
-def _mask_ip(m: re.Match[str]) -> str:
-    parts = m.group(0).split('.')
-    return f"{parts[0]}.{parts[1]}.***.***" if len(parts) == 4 else '[PII_IP]'
-
-
-def _mask_ssn(m: re.Match[str]) -> str:
-    digits = re.sub(r'\D', '', m.group(0))
-    return f"***-**-{_mask_last_digits(digits)}"
-
-
-_MASK_FN: dict[str, Callable[[re.Match[str]], str]] = {
-    'email': _mask_email,
-    'phone': _mask_phone,
-    'card':  _mask_card,
-    'ip':    _mask_ip,
-    'ssn':   _mask_ssn,
-}
-
-
-# ============================================================================
 # Core cleaning functions
 # ============================================================================
-def redact_pii(text: str, mask: bool = False) -> tuple[str, bool]:
-    """Redact or mask PII in text.
-
-    Args:
-        text: Input string.
-        mask: If True, use partial masking instead of full token replacement.
-
-    Returns:
-        Tuple of (cleaned_text, pii_was_found).
-    """
-    # ⚡ Optimization: Pre-check if any potential PII indicator exists in the text
-    # to avoid running all 8 complex regex compilations/searches unnecessarily.
-    if not _PII_CANDIDATE_RE.search(text):
-        return text, False
-
-    pii_found = False
-    for pattern, token, kind in _PII_PATTERNS:
-        if mask and kind in _MASK_FN:
-            text, count = pattern.subn(_MASK_FN[kind], text)
-        else:
-            text, count = pattern.subn(token, text)
-        if count > 0:
-            pii_found = True
-    return text, pii_found
-
-
 # Control characters except tab and newline: answers keep their paragraphs,
 # lists, and code indentation.
 _CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]')
@@ -242,7 +133,9 @@ def _sanitize_value(
         cleaned = clean_text(v, cfg.clean_html)
         pii_found = False
         if cfg.remove_pii:
-            cleaned, pii_found = redact_pii(cleaned, mask=cfg.pii_mask)
+            cleaned, pii_found = redact_pii(
+                cleaned, mask=cfg.pii_mask, url_policy=cfg.url_policy, presidio=cfg.presidio,
+            )
         return cleaned, pii_found
 
     if isinstance(v, dict):

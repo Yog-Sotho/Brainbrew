@@ -1,0 +1,68 @@
+# Brainbrew + a local vLLM model server.
+#
+#   cp .env.sample .env            # HF_TOKEN is only needed for gated models / publishing
+#   docker compose up -d
+#   open http://127.0.0.1:8501
+#
+# The app (CPU image) sends every request to the vLLM container over the
+# compose network; the endpoint is locked so visitors cannot point the app at
+# other servers. vLLM's port is not published on the host.
+#
+# Choose the model with VLLM_MODEL (default below). It must fit in GPU memory;
+# vLLM needs an NVIDIA GPU, a driver with CUDA support and the NVIDIA
+# Container Toolkit.
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.31.0
+    entrypoint: ["vllm", "serve"]
+    command:
+      - "${VLLM_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+      - "--max-model-len=${VLLM_MAX_MODEL_LEN:-16384}"
+      - "--gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 600s  # first start downloads the model
+      retries: 5
+    restart: unless-stopped
+
+  brainbrew:
+    build:
+      context: .
+      target: api
+    image: brainbrew-api
+    depends_on:
+      vllm:
+        condition: service_healthy
+    environment:
+      OPENAI_BASE_URL: "http://vllm:8000/v1"
+      BRAINBREW_ALLOW_CUSTOM_ENDPOINTS: "0"
+      BRAINBREW_DEFAULT_MODEL: "${VLLM_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_USERNAME: "${HF_USERNAME:-}"
+      BRAINBREW_REQUIRE_LOGIN: "${BRAINBREW_REQUIRE_LOGIN:-}"
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - brainbrew-runs:/app/runs
+    restart: unless-stopped
+
+volumes:
+  hf-cache:
+  brainbrew-runs:

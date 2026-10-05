@@ -127,6 +127,18 @@ def semantic_chunk(
     return [c for c in merged if c.strip()]
 
 
+# Generation chunks: each yields several questions, and answers need enough
+# context to be complete.
+GENERATION_CHUNK_CHARS = 1600
+GENERATION_CHUNK_OVERLAP = 200
+
+
+def source_chunks(text: str, semantic: bool = False) -> list[str]:
+    """Chunk *text* the way generation does (used for runs and yield estimates)."""
+    chunker = semantic_chunk if semantic else character_chunk
+    return chunker(text, GENERATION_CHUNK_CHARS, GENERATION_CHUNK_OVERLAP)
+
+
 def read_document(name: str, data: bytes) -> str:
     """Extract plain text from an uploaded PDF or text file.
 

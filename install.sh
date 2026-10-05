@@ -485,15 +485,11 @@ if [[ "$SKIP_TESTS" == false ]]; then
   _test_import "pdfminer"                  "pdfminer.six"             || IMPORT_FAILURES=$(( IMPORT_FAILURES + 1 ))
   _test_import "datasets"                  "datasets"                 || IMPORT_FAILURES=$(( IMPORT_FAILURES + 1 ))
   _test_import "huggingface_hub"           "huggingface_hub"          || IMPORT_FAILURES=$(( IMPORT_FAILURES + 1 ))
+  _test_import "openai"                    "openai"                   || IMPORT_FAILURES=$(( IMPORT_FAILURES + 1 ))
 
   # GPU-only imports -- warn but don't count as failure
   if [[ "$HAS_GPU" == true ]]; then
-    _test_import "distilabel" "distilabel" || warn "distilabel import failed -- check CUDA setup."
-    _test_import "vllm"       "vllm"       || warn "vLLM import failed -- ensure CUDA drivers are installed."
-  else
-    "$PYTHON_ACTIVE" -c "import distilabel" 2>>"$LOG_FILE" \
-      && ok "  + distilabel" \
-      || warn "  x distilabel -- may need GPU drivers at runtime."
+    _test_import "vllm" "vllm" || warn "vLLM import failed -- ensure CUDA drivers are installed."
   fi
 
   if [[ "$IMPORT_FAILURES" -gt 0 ]]; then
@@ -553,6 +549,26 @@ DOCKERSCRIPT
 chmod +x run_docker.sh
 ok "Created run_docker.sh"
 
+if [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
+  cat > run_vllm.sh << 'VLLMSCRIPT'
+#!/usr/bin/env bash
+# Brainbrew -- local vLLM model server (OpenAI-compatible, http://127.0.0.1:8000/v1)
+# Usage: bash run_vllm.sh [MODEL] [extra `vllm serve` flags...]
+# Then pick "Local vLLM server" in the app and use MODEL as the teacher model.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+if [[ -f ".venv/bin/activate" ]]; then
+  source ".venv/bin/activate"
+fi
+MODEL="${1:-Qwen/Qwen3-4B-Instruct-2507}"
+shift || true
+exec vllm serve "$MODEL" --host 127.0.0.1 --port 8000 "$@"
+VLLMSCRIPT
+  chmod +x run_vllm.sh
+  ok "Created run_vllm.sh"
+fi
+
 # ---------------------------------------------------------------------------
 # 15.  FINAL SUMMARY
 # ---------------------------------------------------------------------------
@@ -591,7 +607,7 @@ echo ""
 
 echo -e "${BOLD}Recommended mode for your hardware:${RESET}"
 case "$RECOMMENDED_MODE" in
-  vllm)               echo -e "  vLLM mode  (GPU: ${GPU_VRAM_GB} GB VRAM detected)" ;;
+  vllm)               echo -e "  vLLM mode  (GPU: ${GPU_VRAM_GB} GB VRAM detected) -- start the model server with: bash run_vllm.sh" ;;
   openai_with_lora)   echo -e "  OpenAI API + local LoRA training (GPU: ${GPU_VRAM_GB} GB)" ;;
   openai)             echo -e "  OpenAI API mode  (no GPU / insufficient VRAM)" ;;
 esac

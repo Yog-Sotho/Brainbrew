@@ -8,6 +8,7 @@
 !app.py
 !config.py
 !orchestrator.py
+!engine/
 !pipeline/
 !publish/
 !training/

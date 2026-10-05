@@ -1,0 +1,69 @@
+name: Benchmark
+
+# Nightly generation-quality benchmark (bench/run_bench.py) on the fixed corpus
+# in tests/fixtures/bench/ with a cheap model. Needs the OPENAI_API_KEY secret;
+# without it the job is skipped with a notice. Optional repository variables:
+# BENCH_MODEL (default gpt-4o-mini) and BENCH_BASE_URL (another
+# OpenAI-compatible endpoint).
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Teacher model (default: BENCH_MODEL or gpt-4o-mini)"
+        required: false
+      scale:
+        description: "Multiply every target (1.0 = full benchmark)"
+        required: false
+        default: "1.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.23"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - name: Check for an API key
+        id: key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::OPENAI_API_KEY secret is not set; skipping the benchmark."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run benchmark
+        if: steps.key.outputs.present == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.BENCH_BASE_URL }}
+          BENCH_MODEL: ${{ inputs.model || vars.BENCH_MODEL || 'gpt-4o-mini' }}
+          BENCH_SCALE: ${{ inputs.scale || '1.0' }}
+          BRAINBREW_RUNS_DIR: ${{ runner.temp }}/runs
+        run: >-
+          uv run --locked python bench/run_bench.py
+          --model "$BENCH_MODEL" --scale "$BENCH_SCALE" --out bench-report.json
+      - name: Print report
+        if: always() && steps.key.outputs.present == 'true'
+        run: cat bench-report.json 2>/dev/null || true
