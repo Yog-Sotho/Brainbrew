@@ -6,14 +6,10 @@ This is the main entry point for the application. Run with:
 """
 from __future__ import annotations
 
-import json
 import os
-from typing import Any
-from urllib.parse import urlsplit
 
 import streamlit as st
 import structlog
-from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from config import (
@@ -22,51 +18,25 @@ from config import (
     QUALITY_MODE_LABELS,
     DistillationConfig,
 )
-from orchestrator import run_distillation
 from pipeline.decontam import EVAL_SETS
-from pipeline.document_loader import read_document, source_chunks
+from pipeline.document_loader import source_chunks
+from pipeline.jobs import get_runner
 from pipeline.pii import presidio_available
-from pipeline.records import Record
-from pipeline.runs import RunDir, create_run, open_run
+from pipeline.pricing import estimate_cost, is_local
+from pipeline.service import new_run, read_documents
 from pipeline.synth import PAIRS_PER_CHUNK_ESTIMATE
+from pipeline.version import __version__
+from publish.dataset_card import LICENSES
+from ui.common import current_owner, setup_page, visible_run
+from ui.results import render_run
 
-load_dotenv()
-structlog.configure(wrapper_class=structlog.make_filtering_bound_logger("INFO"))
+setup_page("Generate")
 logger = structlog.get_logger(__name__)
 
 MAX_WARN_BYTES: int = 10 * 1024 * 1024   # warn at 10 MB
 MAX_HARD_BYTES: int = 50 * 1024 * 1024   # hard limit at 50 MB per file
 
-# ── Page config ──────────────────────────────────────────────────────────────
-
-st.set_page_config(page_title="Brainbrew", page_icon="🧠", layout="wide")
-
-# ── Optional login gate ──────────────────────────────────────────────────────
-# Set BRAINBREW_REQUIRE_LOGIN=1 and an [auth] block in .streamlit/secrets.toml
-# (OIDC provider) before exposing the app beyond localhost.
-def _auth_configured() -> bool:
-    try:
-        return "auth" in st.secrets
-    except FileNotFoundError:  # no secrets.toml at all
-        return False
-
-
-if os.getenv("BRAINBREW_REQUIRE_LOGIN", "").strip().lower() in {"1", "true", "yes"}:
-    if not _auth_configured():
-        # Fail closed: never fall through to an unauthenticated app.
-        st.error(
-            "BRAINBREW_REQUIRE_LOGIN is set but no [auth] section was found in "
-            ".streamlit/secrets.toml. Configure an OIDC provider to continue."
-        )
-        st.stop()
-    if not st.user.is_logged_in:
-        st.title("🧠 Brainbrew")
-        st.info("This Brainbrew instance is private. Please log in.")
-        st.button("Log in", on_click=st.login, type="primary")
-        st.stop()
-    st.sidebar.button("Log out", on_click=st.logout)
-
-st.title("🧠 Brainbrew v2.0.0")
+st.title(f"🧠 Brainbrew v{__version__}")
 st.caption("Grounded synthetic dataset generator for any OpenAI-compatible model")
 
 # ── Model endpoint ───────────────────────────────────────────────────────────
@@ -263,13 +233,28 @@ if train_model:
 
 publish: bool = st.checkbox("Publish to Hugging Face", value=False)
 hf_repo_name: str | None = None
+hf_public = False
+dataset_license = "other"
+publish_adapter = False
 if publish:
     default_repo: str = f"{os.getenv('HF_USERNAME', 'yourusername')}/brainbrew-dataset"
     hf_repo_name = st.text_input(
         "Hugging Face Repo",
         value=default_repo,
-        help="Format: username/repo-slug. Created as private if it does not exist.",
+        help="Format: username/repo-slug. A dataset card describing how the data was made is uploaded too.",
     )
+    col_lic, col_pub = st.columns([2, 1])
+    dataset_license = col_lic.selectbox(
+        "License", options=list(LICENSES),
+        help="Shown on the dataset card. Data derived from your documents may be bound by their terms.",
+    )
+    hf_public = col_pub.checkbox("Make it public", value=False,
+                                 help="New repos are private unless you tick this.")
+    if train_model:
+        publish_adapter = st.checkbox(
+            "Also publish the LoRA adapter", value=False,
+            help="Uploaded as a model repo named <dataset repo>-lora, with a model card.",
+        )
 
 uploaded_files = st.file_uploader(
     "Upload documents (PDF/TXT)",
@@ -290,13 +275,7 @@ if uploaded_files:
 @st.cache_data(show_spinner="Reading documents…", max_entries=8)
 def _read_uploads(files: tuple[tuple[str, bytes], ...]) -> tuple[str, list[str]]:
     """Extracted text plus per-file read errors (cached per upload content)."""
-    parts, errors = [], []
-    for name, data in files:
-        try:
-            parts.append(read_document(name, data))
-        except Exception as e:
-            errors.append(f"Could not parse '{name}': {e} — skipping.")
-    return "\n\n".join(parts), errors
+    return read_documents(files)
 
 
 source_text: str = ""
@@ -308,16 +287,6 @@ chunk_count = len(source_chunks(source_text, use_semantic_chunking)) if source_t
 
 # ── Cost / time / yield estimate ─────────────────────────────────────────────
 
-# Pricing (USD per 1M tokens, blended input+output estimate).
-# Source: https://openai.com/api/pricing/
-_MODEL_PRICING: dict[str, float] = {
-    "gpt-4o-mini":    0.50,    # $0.15 input + $0.60 output per 1M
-    "gpt-4o":         8.00,    # $2.50 input + $10 output per 1M
-    "gpt-4.1-mini":   0.35,    # $0.10 input + $0.40 output per 1M
-    "gpt-4.1":        6.50,    # $2.00 input + $8.00 output per 1M
-    "gpt-3.5-turbo":  1.00,    # legacy pricing estimate
-}
-_DEFAULT_COST_PER_M: float = 8.00  # conservative default for unknown hosted models
 # Tokens per *accepted* pair, including over-generation, question writing,
 # answering, and (Balanced/Research) judging and evolving.
 _TOKENS_PER_PAIR: dict[str, int] = {"fast": 1500, "balanced": 2600, "research": 3800}
@@ -329,13 +298,11 @@ def _estimate(model: str, size: int, mode: str, local: bool) -> tuple[str, str]:
     minutes = max(1, round(total_tokens / 60_000))  # ~1k tokens/s across parallel requests
     if local:
         return "Free (your server)", f"~{minutes} min"
-    first_model = model.split(",")[0].strip().lower()
-    cost_per_m = next((price for key, price in _MODEL_PRICING.items() if key in first_model), _DEFAULT_COST_PER_M)
-    return f"~${total_tokens * cost_per_m / 1_000_000:.2f}", f"~{minutes} min"
+    cost = estimate_cost(model.split(",")[0].strip(), total_tokens, local) or 0.0
+    return f"~${cost:.2f}", f"~{minutes} min"
 
 
-is_local = base_url is not None and urlsplit(base_url).hostname in {"localhost", "127.0.0.1", "::1"}
-est_cost, est_time = _estimate(teacher_model, dataset_size, quality_mode.value, is_local)
+est_cost, est_time = _estimate(teacher_model, dataset_size, quality_mode.value, is_local(base_url))
 yield_note = ""
 if chunk_count:
     expected = chunk_count * PAIRS_PER_CHUNK_ESTIMATE
@@ -359,6 +326,7 @@ _FIELD_LABELS: dict[str, str] = {
     "base_model": "Base model",
     "base_url": "Endpoint URL",
     "hf_repo": "Hugging Face repo",
+    "hf_model_repo": "Adapter repo",
     "api_key": "API key",
     "hf_token": "Hugging Face token",
     "dataset_size": "Dataset size",
@@ -414,6 +382,9 @@ try:
         lora_rank=lora_rank,
         publish_dataset=publish,
         hf_repo=hf_repo_name if publish else None,
+        hf_private=not hf_public,
+        dataset_license=dataset_license,
+        publish_adapter=publish_adapter,
         api_key=openai_key or (openai_env_key if use_server_key else None),
         hf_token=hf_token or os.getenv("HF_TOKEN"),
         temperature=temperature,
@@ -440,89 +411,10 @@ else:
     button_help = "Click to start generating the dataset."
 
 
-# ── Results (rendered on every rerun while this session has a run) ──────────
-
-_GRADE_EMOJI = {"SUPER": "🟢", "GOOD": "🔵", "NORMAL": "🟡", "BAD": "🟠", "DISASTER": "🔴"}
-
-
-def _preview(run: RunDir, limit: int = 5) -> list[Record]:
-    rows: list[Record] = []
-    try:
-        with open(run.records, encoding="utf-8") as fh:
-            for line in fh:
-                if len(rows) >= limit:
-                    break
-                rows.append(Record.model_validate(json.loads(line)))
-    except (OSError, ValueError):
-        logger.debug("Preview unavailable", run_id=run.run_id, exc_info=True)
-    return rows
-
-
-def _render_results(run_id: str) -> None:
-    try:
-        run = open_run(run_id)
-    except (ValueError, FileNotFoundError):
-        st.session_state.pop("run_id", None)
-        return
-    manifest: dict[str, Any] = run.read_manifest()
-    if manifest.get("status") != "succeeded":
-        return
-
-    quality = manifest.get("quality", {})
-    grade = quality.get("grade", "DISASTER")
-    st.markdown(f"### {_GRADE_EMOJI.get(grade, '⚪')} Dataset Quality: **{grade}**")
-    st.caption(quality.get("details", ""))
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Records", quality.get("record_count", 0))
-    col2.metric("Avg. Output Length", f"{quality.get('avg_output_length', 0):.0f} chars")
-    col3.metric("Uniqueness", f"{quality.get('unique_ratio', 0):.0%}")
-
-    preview = _preview(run)
-    if preview:
-        with st.expander("👀 Preview first 5 examples", expanded=True):
-            for i, rec in enumerate(preview, 1):
-                st.markdown(f"**Example {i}**")
-                with st.chat_message("user"):
-                    st.markdown(rec.prompt)
-                with st.chat_message("assistant"):
-                    st.markdown(rec.output)
-                st.divider()
-
-    dataset = run.root / str(manifest.get("dataset_file", ""))
-    if dataset.is_file():
-        st.download_button(
-            "📥 Download dataset",
-            dataset.read_bytes(),
-            file_name=f"brainbrew-{run.run_id}-{dataset.name}",
-            mime="application/jsonl",
-            on_click="ignore",
-            help="Download the generated dataset in JSONL format.",
-        )
-    adapter = run.root / str(manifest.get("adapter_file", ""))
-    if manifest.get("adapter_file") and adapter.is_file():
-        st.download_button(
-            "🎯 Download LoRA adapter",
-            adapter.read_bytes(),
-            file_name=f"brainbrew-{run.run_id}-adapter.zip",
-            mime="application/zip",
-            on_click="ignore",
-        )
-    if repo := manifest.get("published_repo"):
-        st.success(f"Published to https://huggingface.co/datasets/{repo}")
-    st.caption(f"Run `{run.run_id}` · files saved in `{run.root}`")
-
-
 # ── Generate button ──────────────────────────────────────────────────────────
-
-_STAGE_LABELS: dict[int, str] = {
-    5:   "📄 Reading document…",
-    15:  "⚗️  Writing questions, answering, judging… (this is the long part)",
-    80:  "🧼 Finishing up…",
-    85:  "💾 Exporting dataset…",
-    92:  "🎯 Training LoRA adapter…",
-    96:  "🚀 Publishing to Hugging Face…",
-    100: "✅ Done!",
-}
+# The run is handed to the process-wide job runner, so it keeps going when the
+# page is closed or reloaded. Its id goes into the URL (?run=...), which is how
+# a reload finds it again.
 
 if st.button(
     "🚀 Generate Dataset", type="primary",
@@ -530,30 +422,20 @@ if st.button(
 ) and cfg is not None and uploaded_files:
     for warning in read_errors:
         st.warning(warning)
-    run = create_run()
-    run.source.write_text(source_text, encoding="utf-8")
+    owner = current_owner()
+    new = new_run(source_text, owner)
+    get_runner().submit(cfg, new, owner)
+    st.session_state["run_id"] = new.run_id
+    st.query_params["run"] = new.run_id
+    logger.info("Run submitted", run_id=new.run_id)
 
-    progress_bar = st.progress(0)
-    status = st.empty()
-
-    def _on_progress(pct: int) -> None:
-        progress_bar.progress(pct)
-        label = _STAGE_LABELS.get(pct) or (_STAGE_LABELS[15] if 15 < pct < 80 else None)
-        if label:
-            status.caption(label)
-
-    try:
-        result = run_distillation(cfg, run.source, _on_progress, run=run)
-    except Exception as e:
-        logger.exception("Generation failed", run_id=run.run_id)
-        st.error(f"Generation failed: {e}")
+run_id = st.session_state.get("run_id") or st.query_params.get("run")
+if run_id:
+    shown = visible_run(str(run_id))
+    if shown is None:
+        st.session_state.pop("run_id", None)
+        st.query_params.pop("run", None)
     else:
-        st.session_state["run_id"] = result.run.run_id
-        status.empty()
-        st.success("✅ Dataset generated!")
-        st.toast("🎉 Synthetic dataset generated successfully!", icon="🧠")
-        if result.published_repo:
-            st.balloons()
-
-if "run_id" in st.session_state:
-    _render_results(st.session_state["run_id"])
+        st.session_state["run_id"] = shown.run_id
+        st.divider()
+        render_run(shown)

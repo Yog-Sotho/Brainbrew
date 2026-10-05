@@ -43,6 +43,8 @@ COPY --from=api-builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app app.py config.py orchestrator.py ./
 COPY --chown=app:app engine/ engine/
+COPY --chown=app:app ui/ ui/
+COPY --chown=app:app pages/ pages/
 COPY --chown=app:app pipeline/ pipeline/
 COPY --chown=app:app publish/ publish/
 COPY --chown=app:app training/ training/
@@ -56,6 +58,7 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
     STREAMLIT_SERVER_PORT=8501 \
+    BRAINBREW_LOG_FORMAT=json \
     BRAINBREW_RUNS_DIR=/app/runs
 EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
@@ -91,6 +94,8 @@ COPY --from=gpu-builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app app.py config.py orchestrator.py ./
 COPY --chown=app:app engine/ engine/
+COPY --chown=app:app ui/ ui/
+COPY --chown=app:app pages/ pages/
 COPY --chown=app:app pipeline/ pipeline/
 COPY --chown=app:app publish/ publish/
 COPY --chown=app:app training/ training/
@@ -102,6 +107,7 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
     STREAMLIT_SERVER_PORT=8501 \
+    BRAINBREW_LOG_FORMAT=json \
     BRAINBREW_RUNS_DIR=/app/runs
 EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \

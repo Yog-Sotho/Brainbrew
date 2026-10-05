@@ -7,9 +7,11 @@ plausibly, and it can be told to misbehave the way real servers and models do.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -65,13 +67,23 @@ class FakeOpenAI:
     auth_error: bool = False              # every request gets a 401
     questions_per_passage: int | None = None  # cap distinct questions per passage; then repeats
     leaky_first: bool = False             # first round per passage: questions that cite "the passage"
+    hold: threading.Event | None = None   # requests wait until this is set (a run that stays busy)
     calls: list[dict[str, Any]] = field(default_factory=list)
     _counters: dict[str, int] = field(default_factory=dict)
     _asked: dict[str, int] = field(default_factory=dict)
 
     @property
     def transport(self) -> httpx2.MockTransport:
-        return httpx2.MockTransport(self._handle)
+        if self.hold is None:
+            return httpx2.MockTransport(self._handle)
+        hold = self.hold
+
+        async def held(request: httpx2.Request) -> httpx2.Response:
+            while not hold.is_set():
+                await asyncio.sleep(0.02)
+            return self._handle(request)
+
+        return httpx2.MockTransport(held)
 
     def count(self, kind: str) -> int:
         return self._counters.get(kind, 0)

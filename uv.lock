@@ -365,9 +365,11 @@ dependencies = [
     { name = "pdfminer-six" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "streamlit", extra = ["auth"] },
     { name = "structlog" },
     { name = "tenacity" },
+    { name = "typer" },
     { name = "xxhash" },
 ]
 
@@ -411,12 +413,14 @@ requires-dist = [
     { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = ">=2.2" },
     { name = "pydantic", specifier = ">=2.12.0,<3" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "streamlit", extras = ["auth"], specifier = ">=1.54.0,<2" },
     { name = "structlog", specifier = ">=25.1.0" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "torch", marker = "extra == 'train'", specifier = ">=2.6" },
     { name = "transformers", marker = "extra == 'train'", specifier = ">=5.10.4" },
     { name = "trl", marker = "extra == 'train'", specifier = ">=1.14.1" },
+    { name = "typer", specifier = ">=0.27.0" },
     { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm'", specifier = ">=0.30.0" },
     { name = "xxhash", specifier = ">=3.5" },
 ]

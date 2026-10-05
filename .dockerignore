@@ -9,6 +9,8 @@
 !config.py
 !orchestrator.py
 !engine/
+!ui/
+!pages/
 !pipeline/
 !publish/
 !training/

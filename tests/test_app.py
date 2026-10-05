@@ -7,6 +7,7 @@ pipeline with only the model server replaced by the in-memory FakeOpenAI.
 """
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +17,7 @@ import pytest
 
 import orchestrator
 from engine import ChatClient, EndpointSettings
+from pipeline.jobs import get_runner
 from pipeline.runs import open_run
 from tests.fake_openai import FakeOpenAI
 
@@ -82,6 +84,17 @@ def _fake_server(fake: FakeOpenAI | None = None):
 
     with patch.object(orchestrator, "_make_client", make):
         yield made
+
+
+def _generate(app: AppTest) -> AppTest:
+    """Click Generate, wait for the background job, and re-render (call inside _fake_server)."""
+    _generate_button(app).click()
+    app.run()
+    run_id = app.session_state["run_id"]
+    job = get_runner().get(run_id)
+    assert job is not None and job.future is not None
+    job.future.result(timeout=120)
+    return app.run()
 
 
 class TestValidation:
@@ -160,8 +173,7 @@ class TestEndpoints:
         _by_label(app.slider, "Target Dataset Size").set_value(12)
         _upload(app)
         with _fake_server() as made:
-            _generate_button(app).click()
-            app.run()
+            _generate(app)
         assert made and all(s.api_key is None for s in made)
         assert all(s.base_url == "https://attacker.example/v1" for s in made)
 
@@ -170,8 +182,7 @@ class TestEndpoints:
         _by_label(app.slider, "Target Dataset Size").set_value(12)
         _upload(app)
         with _fake_server() as made:
-            _generate_button(app).click()
-            app.run()
+            _generate(app)
         assert made and all(s.api_key == "sk-server-secret" and s.base_url is None for s in made)
 
 
@@ -183,6 +194,16 @@ class TestSettings:
         assert {"Temperature", "Max answer length (tokens)", "Parallel requests",
                 "Request timeout (seconds)", "Judge model", "Minimum judge score",
                 "Embedding model (semantic dedup)", "Paraphrase similarity cut-off"} <= labels
+
+    def test_publishing_controls(self, at):
+        _by_label(at.checkbox, "Publish to Hugging Face").check()
+        at.run()
+        assert _by_label(at.selectbox, "License").value == "other"
+        assert _by_label(at.checkbox, "Make it public").value is False
+        assert not any(c.label.startswith("Also publish the LoRA") for c in at.checkbox)
+        _by_label(at.checkbox, "Auto-train LoRA adapter").check()
+        at.run()
+        assert _by_label(at.checkbox, "Also publish the LoRA adapter").value is False
 
     def test_lora_settings_only_when_training(self, at):
         assert not any(w.label.startswith("Base model") for w in at.text_input)
@@ -216,8 +237,7 @@ class TestDataCleaning:
         _by_label(at.sidebar.multiselect, "Remove benchmark overlap").select("gsm8k")
         at.run()
         with _fake_server(), patch("pipeline.decontam.load_eval_texts", return_value=[]) as load:
-            _generate_button(at).click()
-            at.run()
+            _generate(at)
         load.assert_called_once_with("gsm8k")
         manifest = open_run(at.session_state["run_id"]).read_manifest()
         assert manifest["decontamination"] == {"gsm8k": 0}
@@ -228,11 +248,11 @@ class TestGenerationFlow:
     def test_generate_shows_results_that_survive_reruns(self, at):
         _ready(at)
         with _fake_server():
-            _generate_button(at).click()
-            at.run()
+            _generate(at)
         assert not at.exception, at.exception
-        assert any("Dataset generated" in s.value for s in at.success), _errors(at)
+        assert any("Dataset Quality" in m.value for m in at.markdown), _errors(at)
         run_id = at.session_state["run_id"]
+        assert at.query_params["run"] == run_id
 
         _by_label(at.sidebar.checkbox, "Semantic chunking").check()
         at.run()
@@ -241,10 +261,83 @@ class TestGenerationFlow:
         assert _by_label(at.get("download_button"), "📥 Download dataset") is not None
         assert {m.label for m in at.metric} >= {"Records", "Avg. Output Length", "Uniqueness"}
 
+    def test_reload_reattaches_to_a_running_job_and_can_cancel(self, at, monkeypatch):
+        _ready(at)
+        hold = threading.Event()
+        with _fake_server(FakeOpenAI(hold=hold)):
+            _generate_button(at).click()
+            at.run()
+            run_id = at.session_state["run_id"]
+            job = get_runner().get(run_id)
+            assert job is not None and job.active
+
+            # A page reload is a new session that only has the URL.
+            reloaded = _app(monkeypatch)
+            reloaded.query_params["run"] = run_id
+            reloaded.run()
+            assert any("keeps running" in c.value for c in reloaded.caption)
+            _by_label(reloaded.button, "⏹ Cancel run").click()
+            reloaded.run()
+            hold.set()
+            job.future.result(timeout=60)
+        assert job.status == "cancelled"
+        assert open_run(run_id).read_manifest()["status"] == "cancelled"
+        reloaded.run()
+        assert any("cancelled" in w.value for w in reloaded.warning)
+
+    def test_reload_shows_finished_results(self, at, monkeypatch):
+        _ready(at)
+        with _fake_server():
+            _generate(at)
+        reloaded = _app(monkeypatch)
+        reloaded.query_params["run"] = at.session_state["run_id"]
+        reloaded.run()
+        assert any("Dataset Quality" in m.value for m in reloaded.markdown)
+
+    def test_unknown_run_in_url_is_ignored(self, monkeypatch):
+        app = AppTest.from_file(APP_PATH, default_timeout=60)
+        for var in ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        app.query_params["run"] = "../../etc/passwd"
+        app.run()
+        assert not app.exception and "run" not in app.query_params
+
     def test_failure_is_reported(self, at):
         _ready(at)
         with _fake_server(FakeOpenAI(auth_error=True)):
-            _generate_button(at).click()
-            at.run()
-        assert "Generation failed" in _errors(at)
-        assert "run_id" not in at.session_state
+            _generate(at)
+        assert "Generation failed" in _errors(at) and "bad key" in _errors(at)
+        assert open_run(at.session_state["run_id"]).read_manifest()["status"] == "failed"
+
+
+HISTORY_PATH = str(Path(__file__).resolve().parent.parent / "pages" / "1_Run_history.py")
+
+
+class TestRunHistory:
+
+    def test_empty(self, monkeypatch):
+        for var in ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        page = AppTest.from_file(HISTORY_PATH, default_timeout=60).run()
+        assert not page.exception and any("No runs yet" in i.value for i in page.info)
+
+    def test_lists_runs_with_details(self, at, monkeypatch):
+        _ready(at)
+        with _fake_server():
+            _generate(at)
+        run_id = at.session_state["run_id"]
+        for var in ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        page = AppTest.from_file(HISTORY_PATH, default_timeout=60).run()
+        assert not page.exception, page.exception
+        assert page.selectbox[0].value == run_id
+        assert any("Dataset Quality" in m.value for m in page.markdown)
+        assert {m.label for m in page.metric} >= {"Cost", "Seed", "Time"}
+
+    def test_login_gate_applies_to_this_page_too(self, monkeypatch):
+        for var in ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("BRAINBREW_REQUIRE_LOGIN", "1")
+        page = AppTest.from_file(HISTORY_PATH, default_timeout=60).run()
+        assert any("BRAINBREW_REQUIRE_LOGIN is set" in e.value for e in page.error)
+        assert not page.dataframe

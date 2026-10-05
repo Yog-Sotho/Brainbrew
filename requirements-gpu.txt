@@ -1772,6 +1772,7 @@ pyyaml==6.0.3 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
     # via
     #   accelerate
+    #   brainbrew
     #   datasets
     #   huggingface-hub
     #   langchain-core
@@ -2211,6 +2212,7 @@ typer==0.27.2 \
     --hash=sha256:269b7eb9d3c202ca84b4bc9618cb04ebb43d3d4d1e567e4c768607232c05f945 \
     --hash=sha256:b3a5fc4342d5fc8fda8fc3010b1cf117e9249aab7fae800c2eff62fd3842d97d
     # via
+    #   brainbrew
     #   fastapi-cli
     #   fastapi-cloud-cli
     #   fastsafetensors

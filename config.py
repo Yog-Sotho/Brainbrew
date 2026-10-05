@@ -103,10 +103,17 @@ class DistillationConfig(BaseModel):
     base_model: str = DEFAULT_BASE_MODEL
     publish_dataset: bool = False
     hf_repo: str | None = None
+    hf_private: bool = True
+    dataset_license: Literal[
+        "other", "unknown", "cc-by-4.0", "cc-by-sa-4.0", "cc-by-nc-4.0", "cc0-1.0", "odc-by", "mit", "apache-2.0"
+    ] = "other"
+    publish_adapter: bool = False
+    hf_model_repo: str | None = None  # default: "<hf_repo>-lora"
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     max_new_tokens: int = Field(2048, ge=128, le=32768)
     concurrency: int = Field(8, ge=1, le=64)
     request_timeout: int = Field(120, ge=10, le=1800)
+    seed: int | None = Field(None, ge=0, le=2**31 - 1, description="Sampling seed; a random one is recorded when unset")
     lora_rank: int = Field(16, ge=4, le=256)
     api_key: str | None = None
     hf_token: str | None = None
@@ -178,7 +185,7 @@ class DistillationConfig(BaseModel):
             raise ValueError(f"Unknown benchmark(s): {', '.join(unknown)}. Choose from: {', '.join(EVAL_SETS)}.")
         return list(dict.fromkeys(v))
 
-    @field_validator("hf_repo")
+    @field_validator("hf_repo", "hf_model_repo")
     @classmethod
     def validate_hf_repo(cls, v: str | None) -> str | None:
         if v is not None:
@@ -202,6 +209,13 @@ class DistillationConfig(BaseModel):
                 problems.append("hf_repo is required when publish_dataset is enabled")
             if not self.hf_token:
                 problems.append("A Hugging Face token is required when publish_dataset is enabled")
+        if self.publish_adapter:
+            if not self.train_model:
+                problems.append("Publishing the adapter needs LoRA training (train_model) to be on")
+            if not self.model_repo:
+                problems.append("hf_model_repo (or hf_repo) is required when publish_adapter is enabled")
+            if not self.hf_token and not self.publish_dataset:
+                problems.append("A Hugging Face token is required when publish_adapter is enabled")
         if problems:
             raise ValueError("\n".join(problems))
         return self
@@ -215,6 +229,13 @@ class DistillationConfig(BaseModel):
         if "hf_token" in d:
             d["hf_token"] = "***REDACTED***"
         return d
+
+    @property
+    def model_repo(self) -> str | None:
+        """Where the LoRA adapter is published: hf_model_repo, else "<hf_repo>-lora"."""
+        if self.hf_model_repo:
+            return self.hf_model_repo
+        return check_hf_repo_name(f"{self.hf_repo}-lora") if self.hf_repo else None
 
     @property
     def teacher_models(self) -> list[str]:

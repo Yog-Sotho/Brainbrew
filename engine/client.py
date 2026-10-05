@@ -52,6 +52,7 @@ class EndpointSettings:
     timeout_s: float = 120.0
     max_retries: int = 4
     concurrency: int = 8
+    seed: int | None = None  # sent with every chat request when set (reproducible sampling)
 
     def __repr__(self) -> str:
         return (f"EndpointSettings(model={self.model!r}, base_url={self.base_url!r}, "
@@ -167,6 +168,8 @@ class ChatClient:
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if self.settings.seed is not None:
+            kwargs["seed"] = self.settings.seed
         completion = await self._client.chat.completions.create(**kwargs)
         self.usage.add(completion.usage)
         if not completion.choices:
