@@ -1,0 +1,17 @@
+# Allow-list: only what the image needs enters the build context.
+# Secrets (.env, .streamlit/secrets.toml), git history, datasets and local
+# venvs can therefore never be copied into an image layer.
+*
+
+!pyproject.toml
+!uv.lock
+!app.py
+!config.py
+!orchestrator.py
+!pipeline/
+!publish/
+!training/
+!.streamlit/config.toml
+
+**/__pycache__
+**/*.pyc

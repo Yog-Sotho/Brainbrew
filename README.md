@@ -4,6 +4,7 @@
   <p><strong>The ridiculously easy, stupidly powerful no-code machine that turns your boring PDFs and TXT files into god-tier synthetic LLM training data</strong></p>
 
   <p>
+    <a href="https://github.com/Yog-Sotho/Brainbrew/actions/workflows/ci.yml"><img src="https://github.com/Yog-Sotho/Brainbrew/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
     <img src="https://img.shields.io/badge/Python-3.12+-blue.svg" alt="Python 3.12+">
     <img src="https://img.shields.io/badge/Docker-Ready-blue.svg" alt="Docker Ready">
@@ -53,7 +54,7 @@
   <li><strong>Resume support</strong> — crashed runs resume from the last completed batch</li>
   <li><strong>Error handling &amp; progress bars</strong> — because crashes are for amateurs</li>
   <li><strong>Docker ready</strong> — run it anywhere without summoning the dependency demon</li>
-  <li><strong>132+ automated tests</strong> — full CI/CD with pytest, ruff, and mypy</li>
+  <li><strong>260 automated tests</strong> — CI runs pytest, ruff, mypy, pip-audit, gitleaks, and a Docker build on every PR</li>
 </ul>
 
 <p>In short: it's what every AI guy <em>wanted</em> and never found anywhere.</p>
@@ -88,9 +89,15 @@ cd Brainbrew</code></pre>
 <p>The installer handles everything: Python version check, virtual environment, pip dependencies, GPU detection, and <code>.env</code> setup.</p>
 
 <h3>3. Or install manually</h3>
-<pre><code>python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+<p>Dependencies are locked in <code>uv.lock</code>. Pick <strong>one</strong> stack — vLLM and Unsloth cannot share an environment:</p>
+<pre><code># with uv (recommended)
+uv sync                    # core: OpenAI API mode, any OS
+uv sync --extra vllm       # + local GPU inference (Linux, NVIDIA)
+uv sync --extra train      # + LoRA training with Unsloth (Linux, NVIDIA)
+
+# or with pip (hash-pinned exports of the same lock)
+python3.12 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install --require-hashes -r requirements.txt          # or requirements-vllm.txt / requirements-train.txt
 cp .env.sample .env</code></pre>
 
 <p>Edit <code>.env</code>:</p>
@@ -106,13 +113,31 @@ HF_USERNAME=yourusername</code></pre>
 <hr>
 
 <h2>Docker (For the Cool Kids)</h2>
-<pre><code>docker build -t brainbrew .
-docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
+<pre><code># GPU image (vLLM). Needs NVIDIA driver R580+ (CUDA 13.0) and the NVIDIA Container Toolkit.
+docker build -t brainbrew .
+docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env brainbrew
+
+# CPU image (OpenAI API mode only), ~1.2 GB
+docker build --target api -t brainbrew-api .
+docker run -p 127.0.0.1:8501:8501 --env-file .env brainbrew-api
+
+# GPU image for LoRA training instead of vLLM
+docker build --build-arg GPU_EXTRA=train -t brainbrew-train .</code></pre>
+<p>Images run as a non-root user, and <code>.env</code> / <code>.streamlit/secrets.toml</code> are never copied into them (see <code>.dockerignore</code>).</p>
 
 <p>Or use the installer:</p>
 <pre><code>bash install.sh --docker</code></pre>
 
 <p>Open <code>http://localhost:8501</code> and flex.</p>
+
+<hr>
+
+<h2>Security</h2>
+<ul>
+  <li>The app listens on <strong>127.0.0.1</strong> by default (<code>.streamlit/config.toml</code>); the Docker examples publish the port on localhost only.</li>
+  <li>API keys from <code>.env</code> stay on the server and are never sent to the browser. The sidebar only says a server key is configured.</li>
+  <li>Before exposing Brainbrew to a network, turn on login: set <code>BRAINBREW_REQUIRE_LOGIN=1</code> and add an OIDC provider in <code>.streamlit/secrets.toml</code> (template: <code>.streamlit/secrets.toml.example</code>). Without that config the app refuses to start the UI.</li>
+</ul>
 
 <hr>
 
@@ -157,7 +182,8 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
   <li><strong>Unsloth</strong> – fastest LoRA training on the planet</li>
   <li><strong>LangChain text splitters</strong> – character &amp; semantic chunking</li>
   <li><strong>Pydantic + Structlog</strong> – no more "it worked on my machine" excuses</li>
-  <li><strong>pytest</strong> – 132+ tests with CI/CD via GitHub Actions</li>
+  <li><strong>pytest</strong> – 260 tests with CI via GitHub Actions</li>
+  <li><strong>uv</strong> – locked, hash-verified dependencies</li>
 </ul>
 
 <hr>
@@ -181,7 +207,7 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
     </tr>
     <tr>
       <td>vLLM (8B)</td>
-      <td>24 GB+ VRAM</td>
+      <td>24 GB+ VRAM, Linux, driver R580+</td>
       <td>Blazing</td>
       <td>Free</td>
     </tr>
@@ -212,18 +238,13 @@ docker run --gpus all -p 8501:8501 --env-file .env brainbrew</code></pre>
 
 <h2>Testing</h2>
 
-<p>Brainbrew ships with 132+ automated tests covering config validation, security (API key leakage, filename sanitisation), pipeline orchestration, exporter formats, LoRA training, HF publishing, and more. No GPU required to run tests.</p>
+<p>Brainbrew ships with 260 automated tests covering config validation, security (API key leakage to logs and to the browser, filename sanitisation), pipeline orchestration, exporter formats, LoRA training, HF publishing, and more. No GPU required to run tests.</p>
 
-<pre><code># Install test deps
-pip install pytest
+<pre><code>uv run pytest                          # all tests (uses the locked core env + dev tools)
+uv run pytest tests/test_security.py   # just security tests
+uv run ruff check . &amp;&amp; uv run mypy app.py config.py orchestrator.py pipeline/ publish/ training/</code></pre>
 
-# Run all tests
-pytest tests/ -v
-
-# Run just security tests
-pytest tests/test_security.py -v</code></pre>
-
-<p>CI runs automatically on every push and PR via GitHub Actions.</p>
+<p>CI (<code>.github/workflows/ci.yml</code>) runs lint, type checks, tests with a coverage gate, lockfile consistency, pip-audit, gitleaks, and a Docker build + smoke test on every push and PR.</p>
 
 <hr>
 
@@ -238,7 +259,7 @@ pytest tests/test_security.py -v</code></pre>
 <ol>
   <li>Fork it</li>
   <li>Make changes (we love clean PRs)</li>
-  <li>Run <code>pytest tests/ -v</code> and make sure everything passes</li>
+  <li>Run <code>uv run pytest</code> and make sure everything passes. If you change dependencies, run <code>uv lock</code> and regenerate the <code>requirements*.txt</code> exports (CI checks they match)</li>
   <li>Submit PR</li>
 </ol>
 <p>Ideas welcome: RAG retrieval, multi-modal support, web UI for cloud, additional export formats, etc.</p>

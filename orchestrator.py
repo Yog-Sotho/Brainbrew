@@ -8,6 +8,7 @@ safely importable on CPU-only hosts.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import shutil
@@ -163,9 +164,10 @@ def _load_checkpoint(checkpoint_dir: str | None) -> dict[str, Any]:
     cp_path = Path(checkpoint_dir) / "brainbrew_checkpoint.json"
     if cp_path.exists():
         try:
-            return json.loads(cp_path.read_text(encoding="utf-8"))
+            state = json.loads(cp_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
+        return state if isinstance(state, dict) else {}
     return {}
 
 
@@ -293,10 +295,8 @@ def _run_sanitizer(
             error=str(exc),
         )
         if sanitized_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 sanitized_path.unlink()
-            except OSError:
-                pass
         return dataset_path
 
 
@@ -341,10 +341,7 @@ def run_distillation(
 
     # -- Stage 2: chunk text ------------------------------------------------
     # Enhancement 9: use semantic chunking when enabled
-    if cfg.use_semantic_chunking:
-        chunks = semantic_chunk(text)
-    else:
-        chunks = character_chunk(text)
+    chunks = semantic_chunk(text) if cfg.use_semantic_chunking else character_chunk(text)
 
     prompts = [
         f"Explain the following concept from the document clearly and completely:\n\n{c}"

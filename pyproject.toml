@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,8 +7,9 @@ name = "brainbrew"
 version = "1.2.0"
 description = "No-code synthetic LLM training dataset generator"
 readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.12"
+license = "MIT"
+# vLLM supports Python 3.10–3.13; keep the upper bound so the universal lock resolves.
+requires-python = ">=3.12,<3.14"
 authors = [
     {name = "YogSotho"},
 ]
@@ -20,16 +21,67 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Core = OpenAI-API mode. Runs on any OS, no GPU required.
+# Lower bounds are the first releases without known advisories (pip-audit, 2026-10).
+dependencies = [
+    "streamlit[auth]>=1.54.0,<2",
+    "pydantic>=2.12.0,<3",
+    "python-dotenv>=1.2.2",
+    "structlog>=25.1.0",
+    "pdfminer.six>=20251107",
+    "langchain-text-splitters>=1.1.2,<2",
+    "distilabel[openai]>=1.5.3,<1.6",
+    "datasets>=3.4.1",
+    "huggingface-hub>=0.34.0",
+]
+
+[project.optional-dependencies]
+# Local GPU inference. Mutually exclusive with `train` (see [tool.uv].conflicts).
+vllm = [
+    "distilabel[vllm]>=1.5.3,<1.6",
+    "vllm>=0.30.0; sys_platform == 'linux'",
+]
+# Local LoRA fine-tuning. Unsloth pins torch<2.13 / transformers<=5.5, which
+# vLLM>=0.30 (torch==2.13, transformers>=5.10.4) cannot share an environment with.
+train = [
+    "unsloth>=2026.9.14; sys_platform == 'linux'",
+    "trl>=0.18.2; sys_platform == 'linux'",
+    "transformers>=4.51.3; sys_platform == 'linux'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.13",
+    "mypy>=1.18",
 ]
 
 [project.urls]
 Homepage = "https://github.com/Yog-Sotho/Brainbrew"
 Repository = "https://github.com/Yog-Sotho/Brainbrew"
 Issues = "https://github.com/Yog-Sotho/Brainbrew/issues"
+
+# ── setuptools (flat layout) ─────────────────────────────────────────────────
+
+[tool.setuptools]
+py-modules = ["app", "config", "orchestrator"]
+packages = ["pipeline", "publish", "training"]
+
+# ── uv ───────────────────────────────────────────────────────────────────────
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "vllm" },
+        { extra = "train" },
+    ],
+]
 
 # ── pytest ───────────────────────────────────────────────────────────────────
 
@@ -40,24 +92,30 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
+# ── coverage ─────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "old/*", ".venv/*"]
+
 # ── mypy ─────────────────────────────────────────────────────────────────────
 
 [tool.mypy]
 python_version = "3.12"
+plugins = ["pydantic.mypy"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
     "distilabel.*",
     "unsloth.*",
     "trl.*",
-    "vllm.*",
+    "transformers.*",
+    "datasets.*",
     "pdfminer.*",
-    "langchain_text_splitters.*",
 ]
 ignore_missing_imports = true
 
@@ -66,6 +124,7 @@ ignore_missing_imports = true
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = ["old"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]

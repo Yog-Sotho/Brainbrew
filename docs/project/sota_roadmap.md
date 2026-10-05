@@ -43,6 +43,19 @@ Phase 1 fixes distilabel *in place* (option A) so the product works quickly. Pha
 
 **Gate:** `uv sync` succeeds on a clean py3.12 box; `docker build` succeeds; CI is green on a PR; pip-audit reports 0 known vulns with fixes; there is no secret in the page HTML (checked with an `AppTest`).
 
+### Phase 0 status (2026-10-05): done, pending first CI run on GitHub
+
+| Gate item | Result |
+|---|---|
+| Resolvable, locked deps | `uv lock`: 290 packages; `vllm` ⟂ `train` declared as conflicting extras. Core: streamlit 1.65, pydantic 2.13, distilabel 1.5.3, pdfminer.six 20260107. vLLM: vllm 0.31.0 / torch 2.13.0+cu130. |
+| Runtime compatibility | Real distilabel 1.5.3 pipeline (EvolInstruct → TextGeneration) run against a fake OpenAI-compatible server with openai 3.24 / datasets 5.0.1. |
+| Docker | `api` target built, runs as uid 10001, `/_stcore/health` ok and Docker health `healthy`; decoy `.env` and `secrets.toml` in the build dir were absent from the image. `gpu-builder` stage built on Ubuntu 24.04 and `import vllm` works. The final `gpu` stage was not built locally because of sandbox disk limits; it is the same `COPY` pattern as `api`. |
+| Secrets to browser | `tests/test_app_secrets.py` (AppTest) fails on the old `app.py` and passes on the fix. |
+| Network exposure | Server binds 127.0.0.1 (verified: loopback ok, non-loopback refused). Optional OIDC gate (`BRAINBREW_REQUIRE_LOGIN=1`) fails closed without `[auth]` config. |
+| CI | `.github/workflows/ci.yml` passes actionlint, with SHA-pinned actions. Locally: ruff ✓, mypy ✓ (pydantic plugin), 260 tests ✓ (cov 76 %, gate 75 %), lock/exports in sync ✓, pip-audit ✓, gitleaks ✓ (history + tree). |
+
+**Accepted risk, carried into Phase 1:** the `train` extra is capped by Unsloth (torch < 2.13, transformers ≤ 5.5, datasets < 4.4, trl ≤ 0.24). Four advisories therefore remain in that stack only, and CI ignores them for that stack: PYSEC-2025-194, PYSEC-2026-3929, PYSEC-2026-4174 and PYSEC-2026-3716. setuptools CVE-2026-59890 (build-time sdist handling) is capped by vllm (< 81) and ignored everywhere. **Add to Phase 1.3:** move LoRA training to plain TRL + PEFT (no Unsloth pin), which lifts these caps.
+
 ## Phase 1: Make it correct (about 3–4 days)
 
 | # | Task |

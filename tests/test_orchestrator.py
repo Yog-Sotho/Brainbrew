@@ -269,14 +269,14 @@ class TestErrorConditions:
 
     def test_missing_source_file_raises(self, base_config, tmp_path):
         from orchestrator import run_distillation
-        with pytest.raises(Exception):
+        with pytest.raises(FileNotFoundError):
             run_distillation(base_config, Path("/nonexistent/path/source.txt"),
                              output_dir=tmp_path)
 
     def test_empty_source_file_raises(self, base_config, tmp_path):
         empty = tmp_path / "empty.txt"
         empty.write_text("", encoding="utf-8")
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match="empty"):
             _run_with_mocks(base_config, empty, tmp_path=tmp_path)
 
     def test_large_source_file_raises_valueerror(self, base_config, tmp_path):

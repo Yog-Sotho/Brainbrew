@@ -18,7 +18,7 @@ import pytest
 
 class TestApiKeyContainment:
 
-    SECRET = "sk-prod-key-abc123xyz789"
+    SECRET = "sk-prod-key-abc123xyz789"  # gitleaks:allow (fake fixture value)
 
     @pytest.fixture()
     def cfg(self):

@@ -22,6 +22,9 @@ venv/
 
 # Environment secrets
 .env
+.env.*
+!.env.sample
+.streamlit/secrets.toml
 
 # Backup / merge artifacts
 *.orig
@@ -42,3 +45,9 @@ install.log
 
 # Checkpoints (generated at runtime)
 checkpoints/
+
+# Tooling caches
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
