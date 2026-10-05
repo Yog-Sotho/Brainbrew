@@ -107,6 +107,7 @@ class DistillationConfig(BaseModel):
     max_new_tokens: int = Field(2048, ge=128, le=32768)
     concurrency: int = Field(8, ge=1, le=64)
     request_timeout: int = Field(120, ge=10, le=1800)
+    seed: int | None = Field(None, ge=0, le=2**31 - 1, description="Sampling seed; a random one is recorded when unset")
     lora_rank: int = Field(16, ge=4, le=256)
     api_key: str | None = None
     hf_token: str | None = None

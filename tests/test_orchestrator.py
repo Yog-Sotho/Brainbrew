@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,6 +129,35 @@ class TestPipelineContract:
 
 class TestRunDirectory:
 
+    def test_manifest_records_how_the_run_was_made(self, source):
+        result, made = _run_capture(_cfg(seed=1234, judge_model="judge-m"), source)
+        m = result.run.read_manifest()
+        assert m["brainbrew_version"] and m["pid"] and m["host"]
+        assert m["models"] == {"teacher": ["gpt-4o-mini"], "judge": "judge-m", "embedding": None}
+        assert m["seed"] == 1234 and all(s.seed == 1234 for s in made)
+        assert set(m["timings"]) >= {"read", "chunk", "generate", "export"}
+        assert m["cost_usd"]["teacher:gpt-4o-mini"] > 0 and m["cost_usd"]["judge:judge-m"] is None
+        assert m["cost_usd"]["total"] is None  # an unknown hosted model makes the total unknown
+        assert m["stage"] == "Done" and m["progress"] == 100
+
+    def test_seed_is_sent_and_a_random_one_recorded(self, source):
+        fake = FakeOpenAI()
+        result = _run(_cfg(), source, fake)
+        seed = result.run.read_manifest()["seed"]
+        assert isinstance(seed, int) and all(c.get("seed") == seed for c in fake.calls)
+
+    def test_local_endpoint_costs_nothing(self, source):
+        result = _run(_cfg(base_url="http://localhost:8000/v1", api_key=None), source)
+        assert result.run.read_manifest()["cost_usd"]["total"] == 0.0
+
+    def test_run_log_holds_only_this_run(self, source):
+        secret = "sk-this-must-never-be-in-the-run-log"
+        result = _run(_cfg(api_key=secret), source)
+        lines = [json.loads(line) for line in result.run.log.read_text(encoding="utf-8").splitlines()]
+        assert lines and all(line["run_id"] == result.run.run_id for line in lines)
+        assert any(line["event"] == "Finished" for line in lines)
+        assert secret not in result.run.log.read_text(encoding="utf-8")
+
     def test_manifest(self, source, _isolated_runs_dir):
         result = _run(_cfg(sanitize_dataset=True), source)
         run = open_run(result.run.run_id)
@@ -162,6 +192,40 @@ class TestRunDirectory:
         assert _run(_cfg(), source, run=run).run.root == run.root
 
 
+class TestCancel:
+
+    def test_cancel_stops_in_flight_requests(self, source):
+        hold, cancel = threading.Event(), threading.Event()
+        outcome: dict[str, object] = {}
+        run = orchestrator.create_run()
+
+        def target() -> None:
+            try:
+                _run(_cfg(), source, FakeOpenAI(hold=hold), run=run, cancel=cancel)
+            except BaseException as exc:
+                outcome["error"] = exc
+
+        thread = threading.Thread(target=target)
+        thread.start()
+        deadline = time.monotonic() + 30
+        while run.read_manifest().get("stage") != "Writing questions, answering, judging":
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        cancel.set()  # requests are still held: only cancellation can end the run
+        thread.join(timeout=30)
+        hold.set()
+        assert not thread.is_alive()
+        assert isinstance(outcome.get("error"), orchestrator.RunCancelled)
+        m = run.read_manifest()
+        assert m["status"] == "cancelled" and m["finished_at"]
+
+    def test_cancel_before_start(self, source):
+        cancel = threading.Event()
+        cancel.set()
+        with pytest.raises(orchestrator.RunCancelled):
+            _run(_cfg(), source, cancel=cancel)
+
+
 class TestFailures:
 
     def test_nothing_accepted_raises(self, source):
@@ -193,10 +257,12 @@ class TestFailures:
 class TestProgressAndLogging:
 
     def test_progress_increases_to_100(self, source):
-        values: list[int] = []
-        _run(_cfg(), source, progress_callback=values.append)
+        updates: list[tuple[int, str]] = []
+        _run(_cfg(), source, progress_callback=lambda pct, stage: updates.append((pct, stage)))
+        values = [pct for pct, _ in updates]
         assert values == sorted(values) and values[-1] == 100
         assert all(0 <= v <= 100 for v in values)
+        assert updates[-1][1] == "Done" and any("judging" in stage for _, stage in updates)
 
     def test_api_key_not_logged(self, source):
         secret = "sk-this-must-never-appear-in-logs"

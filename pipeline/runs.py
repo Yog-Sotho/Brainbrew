@@ -9,7 +9,10 @@ page reloads and server restarts:
         raw.jsonl           canonical records straight from the teacher model
         records.jsonl       canonical records after dedup + sanitizing
         dataset.<fmt>.jsonl the export in the chosen training format
-        manifest.json       config (no secrets), status, counts, quality report
+        rejected.jsonl      pairs the filters or the judge rejected, with the reason
+        run.log             this run's log lines (JSON)
+        manifest.json       config (no secrets), status, progress, models, seed,
+                            usage and cost, stage timings, counts, quality report
         adapter/            LoRA adapter (when training was requested)
         adapter.zip         the adapter, zipped for download
 
@@ -21,12 +24,24 @@ import json
 import os
 import re
 import secrets
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 RUNS_DIR_ENV = "BRAINBREW_RUNS_DIR"
+# Run states recorded in manifest.json.
+ACTIVE_STATES = ("created", "queued", "running")
+FINAL_STATES = ("succeeded", "failed", "cancelled")
+
+
+class RunCancelled(Exception):
+    """Raised inside a run when its cancel event is set."""
+
+    def __init__(self) -> None:
+        super().__init__("Run cancelled")
+_MANIFEST_LOCK = threading.Lock()
 _RUN_ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")
 
 
@@ -66,6 +81,10 @@ class RunDir:
         return self.root / "rejected.jsonl"
 
     @property
+    def log(self) -> Path:
+        return self.root / "run.log"
+
+    @property
     def manifest_path(self) -> Path:
         return self.root / "manifest.json"
 
@@ -89,12 +108,19 @@ class RunDir:
         return data if isinstance(data, dict) else {}
 
     def update_manifest(self, **fields: Any) -> dict[str, Any]:
-        """Merge *fields* into manifest.json (atomic replace) and return it."""
-        manifest = self.read_manifest()
-        manifest.update(fields)
-        tmp = self.manifest_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.manifest_path)
+        """Merge *fields* into manifest.json (atomic replace) and return it.
+
+        Readers never see a half-written file; writers in this process are
+        serialised, and each writer uses its own temporary file.
+        """
+        with _MANIFEST_LOCK:
+            manifest = self.read_manifest()
+            manifest.update(fields)
+            tmp = self.manifest_path.with_name(
+                f".manifest.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
+            tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.manifest_path)
         return manifest
 
 

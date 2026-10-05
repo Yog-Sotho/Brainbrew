@@ -83,7 +83,7 @@ Issues = "https://github.com/Yog-Sotho/Brainbrew/issues"
 
 [tool.setuptools]
 py-modules = ["app", "config", "orchestrator"]
-packages = ["pipeline", "publish", "training"]
+packages = ["engine", "pipeline", "publish", "training", "ui"]
 
 # ── uv ───────────────────────────────────────────────────────────────────────
 

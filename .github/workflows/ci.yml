@@ -46,7 +46,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - name: Mypy
-        run: uv run --locked mypy app.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/
+        run: uv run --locked mypy app.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/ ui/ pages/
 
   test:
     runs-on: ubuntu-latest
