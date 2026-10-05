@@ -396,3 +396,33 @@ class TestEmbeddingModel:
     def test_threshold_range(self):
         with pytest.raises(ValidationError):
             DistillationConfig(teacher_model="m", base_url=LOCAL_URL, semantic_dedup_threshold=1.0)
+
+
+class TestPublishingOptions:
+
+    def _cfg(self, **kw) -> DistillationConfig:
+        return DistillationConfig(teacher_model="m", base_url=LOCAL_URL, **kw)
+
+    def test_private_by_default(self):
+        cfg = self._cfg()
+        assert cfg.hf_private is True and cfg.dataset_license == "other" and cfg.publish_adapter is False
+
+    def test_model_repo_defaults_from_dataset_repo(self):
+        cfg = self._cfg(publish_dataset=True, hf_repo="user/data", hf_token="hf_x", train_model=True,
+                        publish_adapter=True)
+        assert cfg.model_repo == "user/data-lora"
+        assert self._cfg(hf_model_repo="user/other").model_repo == "user/other"
+
+    def test_adapter_needs_training_and_a_repo(self):
+        with pytest.raises(ValidationError) as exc:
+            self._cfg(publish_adapter=True)
+        msg = str(exc.value)
+        assert "needs LoRA training" in msg and "hf_model_repo" in msg and "token is required" in msg
+
+    def test_model_repo_name_validated(self):
+        with pytest.raises(ValidationError, match="Invalid Hugging Face repository name"):
+            self._cfg(hf_model_repo="no slash")
+
+    def test_license_validated(self):
+        with pytest.raises(ValidationError):
+            self._cfg(dataset_license="whatever")

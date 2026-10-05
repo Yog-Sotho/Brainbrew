@@ -195,6 +195,16 @@ class TestSettings:
                 "Request timeout (seconds)", "Judge model", "Minimum judge score",
                 "Embedding model (semantic dedup)", "Paraphrase similarity cut-off"} <= labels
 
+    def test_publishing_controls(self, at):
+        _by_label(at.checkbox, "Publish to Hugging Face").check()
+        at.run()
+        assert _by_label(at.selectbox, "License").value == "other"
+        assert _by_label(at.checkbox, "Make it public").value is False
+        assert not any(c.label.startswith("Also publish the LoRA") for c in at.checkbox)
+        _by_label(at.checkbox, "Auto-train LoRA adapter").check()
+        at.run()
+        assert _by_label(at.checkbox, "Also publish the LoRA adapter").value is False
+
     def test_lora_settings_only_when_training(self, at):
         assert not any(w.label.startswith("Base model") for w in at.text_input)
         _by_label(at.checkbox, "Auto-train LoRA adapter").check()

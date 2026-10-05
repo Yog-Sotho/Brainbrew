@@ -336,12 +336,37 @@ class TestOptionalStages:
         assert args[0] == result.run.records and args[2] == result.run.adapter_dir and args[3] == 32
         assert result.adapter_zip is not None and result.adapter_zip.is_file()
 
-    def test_publish_uploads_the_formatted_dataset(self, source):
-        cfg = _cfg(publish_dataset=True, hf_repo="user/my-dataset", hf_token="hf_x")
+    def test_publish_uploads_the_formatted_dataset_with_a_card(self, source):
+        cfg = _cfg(publish_dataset=True, hf_repo="user/my-dataset", hf_token="hf_x", dataset_license="cc-by-4.0")
         with patch("publish.hf_publisher.publish_dataset") as publish:
             result = _run(cfg, source)
-        publish.assert_called_once_with(str(result.dataset_path), "user/my-dataset", "hf_x")
+        args, kwargs = publish.call_args
+        assert args == (str(result.dataset_path), "user/my-dataset", "hf_x")
+        assert kwargs["private"] is True
+        card = kwargs["card"]
+        assert "license: cc-by-4.0" in card and f"`{result.run.run_id}`" in card
+        assert "| Records | 15 |" in card and "gpt-4o-mini" in card
         assert result.published_repo == "user/my-dataset"
+        assert result.run.read_manifest()["published_private"] is True
+
+    def test_publish_public_and_adapter(self, source):
+        def fake_train(records_path, base_model, output_dir, lora_rank):
+            output_dir.mkdir(parents=True)
+            (output_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+            return output_dir
+
+        cfg = _cfg(publish_dataset=True, hf_repo="user/my-dataset", hf_token="hf_x", hf_private=False,
+                   train_model=True, publish_adapter=True)
+        with patch("training.lora_trainer.train_lora", side_effect=fake_train), \
+             patch("publish.hf_publisher.publish_dataset") as publish, \
+             patch("publish.hf_publisher.publish_adapter") as publish_adapter:
+            result = _run(cfg, source)
+        assert publish.call_args.kwargs["private"] is False
+        args, kwargs = publish_adapter.call_args
+        assert args == (result.run.adapter_dir, "user/my-dataset-lora", "hf_x")
+        assert kwargs["private"] is False and "library_name: peft" in kwargs["card"]
+        assert "user/my-dataset" in kwargs["card"]
+        assert result.run.read_manifest()["published_model_repo"] == "user/my-dataset-lora"
 
     def test_optional_stages_off_by_default(self, source):
         with patch("training.lora_trainer.train_lora") as train, \

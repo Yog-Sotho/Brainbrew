@@ -378,15 +378,23 @@ def _run(
             ))
             run.update_manifest(adapter_file=adapter_zip.name)
 
-    # -- Stage 8: optional HF publish ----------------------------------------
+    # -- Stage 8: optional HF publish (dataset card first, then data; then the adapter) --
     published_repo: str | None = None
-    if cfg.publish_dataset and cfg.hf_repo:
+    if (cfg.publish_dataset and cfg.hf_repo) or cfg.publish_adapter:
         with t.step("publish", 96, "Publishing to Hugging Face"):
-            from publish.hf_publisher import publish_dataset
+            from publish.dataset_card import dataset_card, model_card
+            from publish.hf_publisher import publish_adapter, publish_dataset
 
-            publish_dataset(str(dataset_path), cfg.hf_repo, cfg.hf_token)
-            published_repo = cfg.hf_repo
-            run.update_manifest(published_repo=published_repo)
+            manifest = run.read_manifest()
+            if cfg.publish_dataset and cfg.hf_repo:
+                card = dataset_card(cfg.hf_repo, manifest, dataset_path, run.source, cfg.dataset_license)
+                publish_dataset(str(dataset_path), cfg.hf_repo, cfg.hf_token, private=cfg.hf_private, card=card)
+                published_repo = cfg.hf_repo
+                run.update_manifest(published_repo=published_repo, published_private=cfg.hf_private)
+            if cfg.publish_adapter and cfg.model_repo:
+                card = model_card(cfg.model_repo, manifest, published_repo, cfg.dataset_license)
+                publish_adapter(run.adapter_dir, cfg.model_repo, cfg.hf_token, private=cfg.hf_private, card=card)
+                run.update_manifest(published_model_repo=cfg.model_repo)
 
     t.progress(100, "Done")
     return RunResult(

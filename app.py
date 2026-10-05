@@ -26,6 +26,7 @@ from pipeline.pricing import estimate_cost, is_local
 from pipeline.service import new_run, read_documents
 from pipeline.synth import PAIRS_PER_CHUNK_ESTIMATE
 from pipeline.version import __version__
+from publish.dataset_card import LICENSES
 from ui.common import current_owner, setup_page, visible_run
 from ui.results import render_run
 
@@ -232,13 +233,28 @@ if train_model:
 
 publish: bool = st.checkbox("Publish to Hugging Face", value=False)
 hf_repo_name: str | None = None
+hf_public = False
+dataset_license = "other"
+publish_adapter = False
 if publish:
     default_repo: str = f"{os.getenv('HF_USERNAME', 'yourusername')}/brainbrew-dataset"
     hf_repo_name = st.text_input(
         "Hugging Face Repo",
         value=default_repo,
-        help="Format: username/repo-slug. Created as private if it does not exist.",
+        help="Format: username/repo-slug. A dataset card describing how the data was made is uploaded too.",
     )
+    col_lic, col_pub = st.columns([2, 1])
+    dataset_license = col_lic.selectbox(
+        "License", options=list(LICENSES),
+        help="Shown on the dataset card. Data derived from your documents may be bound by their terms.",
+    )
+    hf_public = col_pub.checkbox("Make it public", value=False,
+                                 help="New repos are private unless you tick this.")
+    if train_model:
+        publish_adapter = st.checkbox(
+            "Also publish the LoRA adapter", value=False,
+            help="Uploaded as a model repo named <dataset repo>-lora, with a model card.",
+        )
 
 uploaded_files = st.file_uploader(
     "Upload documents (PDF/TXT)",
@@ -310,6 +326,7 @@ _FIELD_LABELS: dict[str, str] = {
     "base_model": "Base model",
     "base_url": "Endpoint URL",
     "hf_repo": "Hugging Face repo",
+    "hf_model_repo": "Adapter repo",
     "api_key": "API key",
     "hf_token": "Hugging Face token",
     "dataset_size": "Dataset size",
@@ -365,6 +382,9 @@ try:
         lora_rank=lora_rank,
         publish_dataset=publish,
         hf_repo=hf_repo_name if publish else None,
+        hf_private=not hf_public,
+        dataset_license=dataset_license,
+        publish_adapter=publish_adapter,
         api_key=openai_key or (openai_env_key if use_server_key else None),
         hf_token=hf_token or os.getenv("HF_TOKEN"),
         temperature=temperature,
