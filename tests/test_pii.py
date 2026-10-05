@@ -111,10 +111,13 @@ class TestUrlPolicy:
     def test_keep(self):
         assert redact_pii(self.URL, url_policy="keep") == (self.URL, False)
 
-    @pytest.mark.parametrize("policy", ["domain", "keep"])
-    def test_credentials_always_removed(self, policy):
-        out = _redact("Clone https://alice:hunter2@git.example.com/repo.git", url_policy=policy)
-        assert "alice" not in out and "hunter2" not in out and "git.example.com" in out
+    @pytest.mark.parametrize("policy,expected", [
+        ("domain", "Clone https://git.example.com"),
+        ("keep", "Clone https://git.example.com/repo.git"),
+    ])
+    def test_credentials_always_removed(self, policy, expected):
+        out, found = redact_pii("Clone https://alice:hunter2@git.example.com/repo.git", url_policy=policy)
+        assert out == expected and found
 
     def test_keep_removes_secret_query_values_and_emails(self):
         out = _redact("https://api.example.com/v1?api_key=abc123&user=bob@example.com&page=2", url_policy="keep")
