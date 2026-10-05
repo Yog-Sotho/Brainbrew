@@ -86,7 +86,9 @@ Phase 1 fixes distilabel *in place* (option A) so the product works quickly. Pha
 | 1.8 | Tests run the real libraries: the distilabel DAG with an offline `FakeLLM`, a 4-format matrix, `AppTest` flows through the real `app.py` (upload → generate → results survive reruns), and real TRL + PEFT training on tiny Hub models (new `train-contract` CI job, CPU torch). The test that copied `app.py`'s validation logic was deleted. Coverage 91 % (gate: 80 %). |
 | 1.9 | README: no resume / refusal-cleaning claims, TRL + PEFT, run folders, `OPENAI_BASE_URL`, the one-pair-per-chunk cap. |
 
-**End-to-end gate:** in progress at the time of this commit (real UI in headless Chromium → Streamlit → OpenAI-compatible server running `Qwen/Qwen2.5-0.5B-Instruct` on CPU, 5-page PDF); results follow in the next commit.
+**End-to-end gate: met.** Real UI in headless Chromium → `streamlit run app.py` → an OpenAI-compatible server (via `OPENAI_BASE_URL`) running `Qwen/Qwen2.5-0.5B-Instruct` on CPU, on a 5-page PDF (21.7k chars, 37 chunks), Fast mode, ShareGPT, sanitize on, batch size 1. 74 real model requests in 16 min, 0 timeouts. 36 pairs generated, 36 kept by the sanitizer, grade NORMAL (avg answer 1,230 chars, 100 % unique). The downloaded file was byte-identical to the run's dataset, results survived reruns, and the API key appeared in no file of the run folder. Replaying the same 36 real rows through every post-generation stage gave 36 kept and identical grade/metrics in all 4 formats. Every answer responds to the instruction it is paired with.
+
+**Quality evidence for Phase 2** (same run, 0.5B teacher): 14/36 evolved instructions contain rewrite chatter ("Sure! Here's a more complex version of the prompt…") and 10/36 answers are non-answers or very short ("Understood! If you have any specific questions…") — 16/36 affected. A stronger teacher helps, but 2.2–2.4 need to strip Evol-Instruct preambles and filter non-answers.
 
 **Found during Phase 1 (not in the audit):**
 
