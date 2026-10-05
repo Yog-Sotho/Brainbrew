@@ -26,7 +26,7 @@ from typing import Any
 from openai import AuthenticationError, NotFoundError, PermissionDeniedError
 
 from engine import ChatClient
-from pipeline.dedup import Deduplicator, normalise
+from pipeline.dedup import Deduplicator, SemanticDeduplicator, normalise
 from pipeline.filters import answer_problem, clean_question
 from pipeline.prompts import (
     QUESTION_TYPES,
@@ -65,6 +65,7 @@ class SynthStats:
     judged: int = 0
     judge_rejected: int = 0
     duplicates: int = 0
+    semantic_duplicates: int = 0
     errors: int = 0
     accepted: int = 0
     exhausted_chunks: int = 0
@@ -81,6 +82,7 @@ class SynthSettings:
     evolve: bool = False
     judge_threshold: int = 4
     dedup_threshold: float | None = 0.85  # None: keep near-duplicates
+    semantic_threshold: float = 0.92  # cosine; used only when an embedder is given
     question_types: tuple[QuestionType, ...] = QUESTION_TYPES
     max_rounds: int = MAX_ROUNDS
 
@@ -109,6 +111,7 @@ class _Run:
         judge: ChatClient | None,
         settings: SynthSettings,
         progress: Callable[[float], None] | None,
+        embedder: ChatClient | None = None,
     ) -> None:
         self.chunks = chunks
         self.teachers = teachers
@@ -117,6 +120,8 @@ class _Run:
         self.progress = progress
         self.stats = SynthStats(chunks=len(chunks))
         self.dedup = Deduplicator(settings.dedup_threshold) if settings.dedup_threshold else None
+        self.embedder = embedder
+        self.semantic = SemanticDeduplicator(settings.semantic_threshold) if embedder else None
         self.asked: dict[int, list[str]] = {i: [] for i in range(len(chunks))}
         self.exhausted: set[int] = set()
         self.accepted: list[Record] = []
@@ -208,20 +213,39 @@ class _Run:
         )
         self.candidates.append(((rnd, i, n), rec))
 
-    def accept_round(self) -> None:
+    async def accept_round(self) -> None:
         """Dedup and accept this round's candidates in a stable order, up to the target.
 
         Done after the round (not as replies arrive) so the result does not
-        depend on which request happened to finish first.
+        depend on which request happened to finish first. MinHash catches
+        near-identical wording; the optional embedding pass catches paraphrases.
         """
-        for _, rec in sorted(self.candidates, key=lambda t: t[0]):
+        def text(rec: Record) -> str:
+            return normalise(f"{rec.instruction} {rec.output}")
+
+        ordered = [rec for _, rec in sorted(self.candidates, key=lambda t: t[0])]
+        self.candidates.clear()
+        # Only accepted records enter the indexes, so a rejected pair never blocks a later one.
+        vectors: list[list[float]] | None = None
+        if self.embedder is not None and self.semantic is not None and ordered:
+            fresh = [r for r in ordered if not (self.dedup and self.dedup.is_duplicate(text(r)))]
+            self.stats.duplicates += len(ordered) - len(fresh)
+            # Embed only as many as could still be accepted, with headroom for rejects.
+            ordered = fresh[:2 * (self.s.target - len(self.accepted))]
+            vectors = await self.embedder.embed([f"{r.instruction}\n{r.output}" for r in ordered])
+        for idx, rec in enumerate(ordered):
             if len(self.accepted) >= self.s.target:
                 break
-            if self.dedup and not self.dedup.add_if_new(normalise(f"{rec.instruction} {rec.output}")):
+            key = text(rec)
+            if self.dedup and self.dedup.is_duplicate(key):
                 self.stats.duplicates += 1
                 continue
+            if vectors is not None and self.semantic is not None and not self.semantic.add_if_new(vectors[idx]):
+                self.stats.semantic_duplicates += 1
+                continue
+            if self.dedup:
+                self.dedup.add_if_new(key)
             self.accepted.append(rec)
-        self.candidates.clear()
         self.stats.accepted = len(self.accepted)
 
     # ── rounds ───────────────────────────────────────────────────────────
@@ -246,7 +270,7 @@ class _Run:
                     raise
                 self._report(rnd, finished / len(tasks))
 
-            self.accept_round()
+            await self.accept_round()
             if len(self.accepted) >= self.s.target:
                 break
             produced = self.stats.questions_generated - before_q
@@ -271,12 +295,13 @@ async def synthesize(
     settings: SynthSettings,
     judge: ChatClient | None = None,
     progress: Callable[[float], None] | None = None,
+    embedder: ChatClient | None = None,
 ) -> tuple[list[Record], SynthStats]:
     """Generate up to `settings.target` accepted pairs from *chunks*."""
     if not chunks:
         raise ValueError("No source chunks to generate from.")
     if not teachers:
         raise ValueError("At least one teacher model is required.")
-    run = _Run(chunks, teachers, judge, settings, progress)
+    run = _Run(chunks, teachers, judge, settings, progress, embedder)
     records = await run.run()
     return records, run.stats

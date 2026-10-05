@@ -118,6 +118,21 @@ class TestTransport:
         assert peak == 3
 
 
+class TestEmbeddings:
+
+    def test_vectors_in_input_order_across_batches(self):
+        from engine.client import EMBED_BATCH
+        from tests.fake_openai import fake_embedding
+
+        fake = FakeOpenAI()
+        client = _client(fake)
+        texts = [f"text number {i} about rivers" for i in range(EMBED_BATCH + 5)]
+        vectors = _run(client.embed(texts))
+        assert vectors == [fake_embedding(t) for t in texts]
+        assert len(fake.calls) == 2 and all(c["encoding_format"] == "float" for c in fake.calls)
+        assert client.usage.requests == 2 and client.usage.prompt_tokens > 0
+
+
 class TestParseReply:
 
     class M(BaseModel):

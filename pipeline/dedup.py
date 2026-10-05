@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 import numpy as np
 import xxhash
@@ -107,6 +107,38 @@ class Deduplicator:
     def _band_keys(self, sig: np.ndarray) -> Iterable[bytes]:
         for band in range(self.bands):
             yield sig[band * self.rows:(band + 1) * self.rows].tobytes()
+
+
+class SemanticDeduplicator:
+    """Greedy cosine-similarity dedup over embedding vectors.
+
+    Exact (no index): each new vector is compared with every kept one, which is
+    fast enough for the dataset sizes Brainbrew produces (a few thousand rows).
+    """
+
+    def __init__(self, threshold: float = 0.92) -> None:
+        self.threshold = threshold
+        self._kept: np.ndarray | None = None  # capacity-doubling buffer of unit vectors
+        self._n = 0
+
+    def __len__(self) -> int:
+        return self._n
+
+    def add_if_new(self, vector: Sequence[float]) -> bool:
+        v = np.asarray(vector, dtype=np.float32)
+        norm = float(np.linalg.norm(v))
+        if norm == 0.0:
+            return True  # nothing to compare; keep it
+        v = v / norm
+        if self._kept is None:
+            self._kept = np.empty((64, v.shape[0]), dtype=np.float32)
+        elif self._n and float((self._kept[:self._n] @ v).max()) >= self.threshold:
+            return False
+        if self._n == len(self._kept):
+            self._kept = np.concatenate([self._kept, np.empty_like(self._kept)])
+        self._kept[self._n] = v
+        self._n += 1
+        return True
 
 
 def deduplicate(

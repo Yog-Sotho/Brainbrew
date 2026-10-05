@@ -21,7 +21,12 @@ from pipeline.synth import (
     questions_per_chunk,
     synthesize,
 )
-from tests.fake_openai import FakeOpenAI, fake_answer
+from tests.fake_openai import FakeOpenAI, fake_answer, fake_embedding
+
+
+def _cos(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    return dot / ((sum(x * x for x in a) ** 0.5) * (sum(y * y for y in b) ** 0.5))
 
 CHUNKS = [
     f"Section {i}. Photosynthesis converts sunlight into chemical energy; chlorophyll{i} absorbs light "
@@ -35,12 +40,14 @@ def _client(fake: FakeOpenAI, model: str = "teacher") -> ChatClient:
     return ChatClient(settings, http_client=httpx2.AsyncClient(transport=fake.transport))
 
 
-def _synth(fake: FakeOpenAI, judge: bool = True, chunks: list[str] = CHUNKS, **settings):
+def _synth(fake: FakeOpenAI, judge: bool = True, chunks: list[str] = CHUNKS, embed: bool = False, **settings):
     teacher = _client(fake)
     judge_client = _client(fake, "judge") if judge else None
+    embedder = _client(fake, "embedder") if embed else None
     progress: list[float] = []
     recs, stats = asyncio.run(synthesize(
         chunks, [teacher], SynthSettings(**{"target": 20, **settings}), judge=judge_client, progress=progress.append,
+        embedder=embedder,
     ))
     return recs, stats, progress
 
@@ -110,6 +117,19 @@ class TestPairs:
         recs, stats, _ = _synth(FakeOpenAI(), evolve=True)
         assert stats.evolved > 0
         assert all(r.meta["evolved"] and r.instruction.startswith("Compare and explain") for r in recs)
+
+    def test_semantic_dedup_drops_paraphrases(self):
+        fake = FakeOpenAI()
+        recs, stats, _ = _synth(fake, embed=True, semantic_threshold=0.95)
+        assert stats.semantic_duplicates > 0
+        assert any(c.get("input") for c in fake.calls), "embeddings endpoint must be used"
+        vectors = [fake_embedding(f"{r.instruction}\n{r.output}") for r in recs]
+        assert all(_cos(a, b) < 0.95 for i, a in enumerate(vectors) for b in vectors[i + 1:])
+
+    def test_semantic_dedup_off_without_embedder(self):
+        fake = FakeOpenAI()
+        _, stats, _ = _synth(fake)
+        assert stats.semantic_duplicates == 0 and not any("input" in c for c in fake.calls)
 
     def test_results_are_in_stable_order(self):
         a, _, _ = _synth(FakeOpenAI())

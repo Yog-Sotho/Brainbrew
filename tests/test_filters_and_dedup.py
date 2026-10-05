@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from pipeline.dedup import Deduplicator, deduplicate, normalise, signature
+from pipeline.dedup import Deduplicator, SemanticDeduplicator, deduplicate, normalise, signature
 from pipeline.filters import answer_problem, clean_question
 from pipeline.records import Record
 
@@ -117,3 +117,24 @@ class TestMinHash:
 
         t_small, t_large = timed(small), timed(large)
         assert t_large < t_small * 8  # quadratic would be ~16x
+
+
+class TestSemantic:
+
+    def test_cosine_threshold(self):
+        d = SemanticDeduplicator(0.9)
+        assert d.add_if_new([1.0, 0.0, 0.0])
+        assert not d.add_if_new([0.99, 0.05, 0.0])   # cosine ~0.999
+        assert d.add_if_new([0.0, 1.0, 0.0])
+        assert not d.add_if_new([2.0, 0.0, 0.0])     # scale does not matter
+        assert len(d) == 2
+
+    def test_zero_vector_kept(self):
+        d = SemanticDeduplicator()
+        assert d.add_if_new([0.0, 0.0]) and d.add_if_new([0.0, 0.0])
+
+    def test_grows_past_initial_capacity(self):
+        d = SemanticDeduplicator(0.99)
+        basis = [[1.0 if j == i else 0.0 for j in range(200)] for i in range(200)]
+        assert all(d.add_if_new(v) for v in basis)
+        assert len(d) == 200 and not d.add_if_new(basis[150])

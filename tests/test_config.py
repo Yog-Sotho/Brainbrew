@@ -361,3 +361,38 @@ class TestEndpointUrl:
     def test_blank_means_openai(self):
         cfg = DistillationConfig(teacher_model="m", base_url="  ", api_key="sk-x")
         assert cfg.base_url is None
+
+
+class TestDataCleaningOptions:
+
+    def _cfg(self, **kw) -> DistillationConfig:
+        return DistillationConfig(teacher_model="m", base_url=LOCAL_URL, **kw)
+
+    def test_defaults(self):
+        cfg = self._cfg()
+        assert cfg.pii_url_policy == "domain" and cfg.pii_presidio is False and cfg.decontaminate == []
+
+    def test_benchmarks_validated_and_deduplicated(self):
+        assert self._cfg(decontaminate=["gsm8k", "mmlu", "gsm8k"]).decontaminate == ["gsm8k", "mmlu"]
+        with pytest.raises(ValidationError, match="Unknown benchmark"):
+            self._cfg(decontaminate=["not-a-benchmark"])
+
+    def test_url_policy_validated(self):
+        assert self._cfg(pii_url_policy="keep").pii_url_policy == "keep"
+        with pytest.raises(ValidationError):
+            self._cfg(pii_url_policy="sometimes")
+
+
+class TestEmbeddingModel:
+
+    def test_blank_is_off(self):
+        cfg = DistillationConfig(teacher_model="m", base_url=LOCAL_URL, embedding_model="  ")
+        assert cfg.embedding_model is None
+
+    def test_validated_like_other_model_names(self):
+        with pytest.raises(ValidationError, match="path traversal"):
+            DistillationConfig(teacher_model="m", base_url=LOCAL_URL, embedding_model="../x")
+
+    def test_threshold_range(self):
+        with pytest.raises(ValidationError):
+            DistillationConfig(teacher_model="m", base_url=LOCAL_URL, semantic_dedup_threshold=1.0)

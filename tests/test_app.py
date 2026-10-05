@@ -16,6 +16,7 @@ import pytest
 
 import orchestrator
 from engine import ChatClient, EndpointSettings
+from pipeline.runs import open_run
 from tests.fake_openai import FakeOpenAI
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
@@ -180,7 +181,8 @@ class TestSettings:
         labels = {w.label for w in [*at.sidebar.slider, *at.sidebar.number_input, *at.sidebar.text_input,
                                     *at.sidebar.select_slider]}
         assert {"Temperature", "Max answer length (tokens)", "Parallel requests",
-                "Request timeout (seconds)", "Judge model", "Minimum judge score"} <= labels
+                "Request timeout (seconds)", "Judge model", "Minimum judge score",
+                "Embedding model (semantic dedup)", "Paraphrase similarity cut-off"} <= labels
 
     def test_lora_settings_only_when_training(self, at):
         assert not any(w.label.startswith("Base model") for w in at.text_input)
@@ -198,6 +200,27 @@ class TestSettings:
         _by_label(at.slider, "Target Dataset Size").set_value(5000)
         at.run()
         assert any("likely support about" in w.value for w in at.warning)
+
+
+class TestDataCleaning:
+
+    def test_link_policy_only_when_sanitizing(self, at):
+        assert not any(w.label == "Links in the data" for w in at.sidebar.selectbox)
+        _by_label(at.sidebar.checkbox, "Clean & sanitize").check()
+        at.run()
+        links = _by_label(at.sidebar.selectbox, "Links in the data")
+        assert links.value == "domain"
+
+    def test_benchmarks_reach_the_run(self, at):
+        _ready(at)
+        _by_label(at.sidebar.multiselect, "Remove benchmark overlap").select("gsm8k")
+        at.run()
+        with _fake_server(), patch("pipeline.decontam.load_eval_texts", return_value=[]) as load:
+            _generate_button(at).click()
+            at.run()
+        load.assert_called_once_with("gsm8k")
+        manifest = open_run(at.session_state["run_id"]).read_manifest()
+        assert manifest["decontamination"] == {"gsm8k": 0}
 
 
 class TestGenerationFlow:

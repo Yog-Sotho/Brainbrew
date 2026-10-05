@@ -39,6 +39,17 @@ def fake_answer(question: str) -> str:
             "with the mechanism, an example, and the main consequence spelled out.")
 
 
+EMBEDDING_DIM = 64
+
+
+def fake_embedding(text: str) -> list[float]:
+    """Hashed bag of words: texts sharing most words get a high cosine similarity."""
+    vec = [0.0] * EMBEDDING_DIM
+    for word in re.findall(r"[a-z]{3,}", text.lower()):
+        vec[int(_tag(word), 16) % EMBEDDING_DIM] += 1.0
+    return vec
+
+
 @dataclass
 class FakeOpenAI:
     """Configurable fake. All counters are per instance."""
@@ -74,6 +85,8 @@ class FakeOpenAI:
             return httpx2.Response(429, headers={"retry-after": "0"}, json={"error": {"message": "slow down"}})
         body = json.loads(request.content)
         self.calls.append(body)
+        if request.url.path.endswith("/embeddings"):
+            return self._embeddings(body)
         fmt = (body.get("response_format") or {}).get("type")
         if fmt == "json_schema" and self.reject_json_schema:
             return httpx2.Response(400, json={"error": {"message": "response_format json_schema not supported"}})
@@ -87,6 +100,14 @@ class FakeOpenAI:
                          "message": {"role": "assistant", "content": content}}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
         })
+
+    def _embeddings(self, body: dict[str, Any]) -> httpx2.Response:
+        texts = body["input"] if isinstance(body["input"], list) else [body["input"]]
+        data = [{"object": "embedding", "index": i, "embedding": fake_embedding(t)}
+                for i, t in enumerate(texts)]
+        tokens = sum(len(t.split()) for t in texts)
+        return httpx2.Response(200, json={"object": "list", "data": data, "model": body["model"],
+                                          "usage": {"prompt_tokens": tokens, "total_tokens": tokens}})
 
     # ── content ───────────────────────────────────────────────────────────
     def _reply(self, messages: list[dict[str, str]]) -> str:

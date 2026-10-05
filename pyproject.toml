@@ -45,7 +45,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Local GPU inference server: provides `vllm serve`, an OpenAI-compatible endpoint
-# Brainbrew talks to like any other (see README, docker-compose.yml).
+# Brainbrew talks to like any other (see README, compose.yaml).
 vllm = [
     "vllm>=0.30.0; sys_platform == 'linux'",
 ]
@@ -58,6 +58,12 @@ train = [
     "accelerate>=1.15.0",
     "datasets>=4.7.0",
     "bitsandbytes>=0.50.2; sys_platform == 'linux'",
+]
+# Optional NER-based PII detection (names, passport/licence numbers, ...) on
+# top of the built-in detectors. Also needs a spaCy model:
+#   python -m spacy download en_core_web_lg
+pii = [
+    "presidio-analyzer>=2.2",
 ]
 
 [dependency-groups]
@@ -110,6 +116,7 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = [
     "xxhash.*",
+    "presidio_analyzer.*",
     "peft.*",
     "torch.*",
     "trl.*",

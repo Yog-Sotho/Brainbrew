@@ -107,6 +107,19 @@ class TestPipelineContract:
         assert (teacher.temperature, teacher.max_tokens, teacher.concurrency, teacher.timeout_s) == (0.2, 512, 3, 60.0)
         assert judge.temperature == 0.0
 
+    def test_embedding_model_enables_semantic_dedup(self, source):
+        cfg = _cfg(embedding_model="embed-m", semantic_dedup_threshold=0.95, quality_mode=QualityMode.FAST)
+        result, made = _run_capture(cfg, source)
+        assert [s.model for s in made] == ["gpt-4o-mini", "embed-m"]
+        m = result.run.read_manifest()
+        assert m["usage"]["embeddings:embed-m"]["requests"] > 0
+        assert m["generation"]["semantic_duplicates"] > 0
+
+    def test_no_embedder_when_dedup_is_off(self, source):
+        cfg = _cfg(embedding_model="embed-m", enable_dedup=False, quality_mode=QualityMode.FAST)
+        _, made = _run_capture(cfg, source)
+        assert [s.model for s in made] == ["gpt-4o-mini"]
+
     def test_ensemble_uses_every_teacher(self, source):
         result = _run(_cfg(teacher_model="model-a,model-b", quality_mode=QualityMode.FAST), source)
         models = {r.meta["model"] for r in read_records(result.run.records)}
@@ -210,6 +223,38 @@ class TestProgressAndLogging:
 
 
 class TestOptionalStages:
+
+    def test_decontamination_removes_overlapping_records(self, source):
+        # Runs are deterministic: make the "benchmark" contain one record of a plain run.
+        plain = read_records(_run(_cfg(quality_mode=QualityMode.FAST), source).run.records)
+        leaked = plain[3].instruction  # fake answers share a template; questions are unique
+
+        with patch("pipeline.decontam.load_eval_texts", return_value=[leaked]) as load:
+            result = _run(_cfg(decontaminate=["gsm8k"], quality_mode=QualityMode.FAST), source)
+        load.assert_called_once_with("gsm8k")
+        m = result.run.read_manifest()
+        assert m["decontamination"] == {"gsm8k": 1}
+        assert m["counts"]["after_decontamination"] == m["counts"]["generated"] - 1 == result.record_count
+        assert leaked not in {r.instruction for r in read_records(result.run.records)}
+
+    def test_decontamination_removing_everything_raises(self, source):
+        with patch("pipeline.decontam.decontaminate", return_value=([], {"gsm8k": 15})), \
+             pytest.raises(RuntimeError, match="overlap the selected benchmarks"):
+            _run(_cfg(decontaminate=["gsm8k"]), source)
+
+    def test_sanitizer_gets_the_pii_options(self, source):
+        from pipeline import sanitizer
+
+        seen = []
+        real = sanitizer.sanitize_records
+
+        def spy(records, cfg):
+            seen.append(cfg)
+            return real(records, cfg)
+
+        with patch("pipeline.sanitizer.sanitize_records", side_effect=spy):
+            _run(_cfg(sanitize_dataset=True, pii_url_policy="redact"), source)
+        assert seen[0].url_policy == "redact" and seen[0].presidio is False
 
     def test_training_uses_canonical_records_and_zips_adapter(self, source):
         def fake_train(records_path, base_model, output_dir, lora_rank):

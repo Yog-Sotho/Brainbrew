@@ -23,7 +23,9 @@ from config import (
     DistillationConfig,
 )
 from orchestrator import run_distillation
+from pipeline.decontam import EVAL_SETS
 from pipeline.document_loader import read_document, source_chunks
+from pipeline.pii import presidio_available
 from pipeline.records import Record
 from pipeline.runs import RunDir, create_run, open_run
 from pipeline.synth import PAIRS_PER_CHUNK_ESTIMATE
@@ -76,6 +78,11 @@ SERVER_BASE_URL: str | None = os.getenv("OPENAI_BASE_URL", "").strip() or None
 DEFAULT_MODEL = os.getenv("BRAINBREW_DEFAULT_MODEL", "").strip() or "gpt-4o-mini"
 ALLOW_CUSTOM_ENDPOINTS = os.getenv("BRAINBREW_ALLOW_CUSTOM_ENDPOINTS", "1").strip().lower() not in {"0", "false", "no"}
 _CUSTOM = "custom"
+_URL_POLICY_LABELS = {
+    "domain": "Keep the site, drop the path",
+    "redact": "Remove links",
+    "keep": "Keep links",
+}
 _SERVER_ENDPOINT_LABEL = "Server default" if SERVER_BASE_URL else "OpenAI API"
 ENDPOINTS: dict[str, str | None] = {_SERVER_ENDPOINT_LABEL: SERVER_BASE_URL}
 if ALLOW_CUSTOM_ENDPOINTS:
@@ -143,8 +150,33 @@ with st.sidebar:
         "Clean & sanitize dataset",
         value=False,
         help=(
-            "Remove PII (emails, phone numbers, URLs, IPs, card numbers), strip HTML "
+            "Remove PII (emails, phone numbers, IPs, card and bank numbers, links), strip HTML "
             "artifacts, and drop low-quality pairs before export."
+        ),
+    )
+    pii_url_policy = "domain"
+    pii_presidio = False
+    if sanitize_dataset:
+        pii_url_policy = st.selectbox(
+            "Links in the data",
+            options=list(_URL_POLICY_LABELS),
+            format_func=_URL_POLICY_LABELS.__getitem__,
+            help="Login details and secret-looking query values are removed from links in every mode.",
+        )
+        if presidio_available():
+            pii_presidio = st.checkbox(
+                "Also detect names (Presidio)",
+                value=False,
+                help="NER-based detection of person names, passport and licence numbers. Slower.",
+            )
+    decontaminate: list[str] = st.multiselect(
+        "Remove benchmark overlap",
+        options=list(EVAL_SETS),
+        format_func=lambda key: EVAL_SETS[key].label,
+        help=(
+            "Drop pairs that share a 13-word passage with these public test sets, so models "
+            "trained on the dataset are not evaluated on text they have seen. Downloads the "
+            "benchmarks from Hugging Face on first use."
         ),
     )
 
@@ -170,6 +202,18 @@ with st.sidebar:
         judge_threshold: int = st.select_slider(
             "Minimum judge score", options=[1, 2, 3, 4, 5], value=4,
             help="A pair is kept only if faithfulness, helpfulness and correctness all reach this score.",
+        )
+        embedding_model: str = st.text_input(
+            "Embedding model (semantic dedup)", value="",
+            help=(
+                "Also drop paraphrased duplicates using embeddings from the same endpoint, e.g. "
+                "`text-embedding-3-small` (OpenAI) or an embedding model your server hosts. Blank: off."
+            ),
+        )
+        semantic_dedup_threshold: float = st.slider(
+            "Paraphrase similarity cut-off", 0.80, 0.99, 0.92, 0.01,
+            help="Pairs at least this similar (cosine) to an accepted pair are dropped.",
+            disabled=not embedding_model.strip(),
         )
 
 # ── Main panel ───────────────────────────────────────────────────────────────
@@ -311,6 +355,7 @@ if chunk_count and dataset_size > chunk_count * PAIRS_PER_CHUNK_ESTIMATE:
 _FIELD_LABELS: dict[str, str] = {
     "teacher_model": "Teacher model",
     "judge_model": "Judge model",
+    "embedding_model": "Embedding model",
     "base_model": "Base model",
     "base_url": "Endpoint URL",
     "hf_repo": "Hugging Face repo",
@@ -322,6 +367,7 @@ _FIELD_LABELS: dict[str, str] = {
     "concurrency": "Parallel requests",
     "request_timeout": "Request timeout",
     "lora_rank": "LoRA rank",
+    "decontaminate": "Benchmarks",
 }
 
 
@@ -357,6 +403,8 @@ try:
         teacher_model=teacher_model,
         judge_model=judge_model or None,
         judge_threshold=judge_threshold,
+        embedding_model=embedding_model or None,
+        semantic_dedup_threshold=semantic_dedup_threshold,
         base_url=base_url,
         quality_mode=quality_mode,
         output_format=output_format,
@@ -375,6 +423,9 @@ try:
         use_semantic_chunking=use_semantic_chunking,
         enable_dedup=enable_dedup,
         sanitize_dataset=sanitize_dataset,
+        pii_url_policy=pii_url_policy,
+        pii_presidio=pii_presidio,
+        decontaminate=decontaminate,
     )
 except ValidationError as exc:
     validation_errors.extend(_friendly_errors(exc))

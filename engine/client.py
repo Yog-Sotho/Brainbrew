@@ -104,6 +104,9 @@ def parse_json_reply[T: BaseModel](text: str, model: type[T]) -> T:
         raise StructuredOutputError(f"Reply does not match {model.__name__}: {exc}") from exc
 
 
+EMBED_BATCH = 64
+
+
 class ChatClient:
     """Async chat client bound to one endpoint + model."""
 
@@ -153,6 +156,22 @@ class ChatClient:
         if not completion.choices:
             return ""
         return (completion.choices[0].message.content or "").strip()
+
+    # ── embeddings ────────────────────────────────────────────────────────
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embedding vectors for *texts*, in input order (batched, concurrent)."""
+
+        async def batch(chunk: list[str]) -> list[list[float]]:
+            async with self._semaphore:
+                resp = await self._client.embeddings.create(
+                    model=self.settings.model, input=chunk, encoding_format="float",
+                )
+            self.usage.add(resp.usage)
+            return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
+
+        chunks = [texts[i:i + EMBED_BATCH] for i in range(0, len(texts), EMBED_BATCH)]
+        results = await asyncio.gather(*(batch(c) for c in chunks))
+        return [vec for result in results for vec in result]
 
     # ── structured ────────────────────────────────────────────────────────
     async def chat_json[T: BaseModel](

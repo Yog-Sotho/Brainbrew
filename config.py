@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+
+from pipeline.decontam import EVAL_SETS
 
 
 class QualityMode(StrEnum):
@@ -91,6 +93,8 @@ class DistillationConfig(BaseModel):
     teacher_model: str = Field(..., description="Model name or comma-separated list for multi-model ensemble")
     judge_model: str | None = Field(None, description="Model that grades pairs; defaults to the first teacher")
     judge_threshold: int = Field(4, ge=1, le=5)
+    embedding_model: str | None = Field(None, description="Enables semantic (paraphrase) dedup when set")
+    semantic_dedup_threshold: float = Field(0.92, ge=0.5, le=0.999)
     base_url: str | None = Field(None, description="OpenAI-compatible endpoint; None = api.openai.com")
     dataset_size: int = Field(500, ge=10, le=50000)
     quality_mode: QualityMode = QualityMode.BALANCED
@@ -109,6 +113,9 @@ class DistillationConfig(BaseModel):
     use_semantic_chunking: bool = False
     enable_dedup: bool = True
     sanitize_dataset: bool = False
+    pii_url_policy: Literal["domain", "redact", "keep"] = "domain"
+    pii_presidio: bool = False
+    decontaminate: list[str] = Field(default_factory=list)
 
     @field_validator("api_key", "hf_token")
     @classmethod
@@ -131,7 +138,12 @@ class DistillationConfig(BaseModel):
             return None
         return check_base_url(v)
 
-    @field_validator("teacher_model", "base_model", "judge_model")
+    @field_validator("embedding_model", mode="before")
+    @classmethod
+    def blank_embedding_model_is_off(cls, v: str | None) -> str | None:
+        return None if v is None or not str(v).strip() else v
+
+    @field_validator("teacher_model", "base_model", "judge_model", "embedding_model")
     @classmethod
     def validate_model_names(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
@@ -157,6 +169,14 @@ class DistillationConfig(BaseModel):
         if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", v_stripped):
             raise ValueError("Model name contains invalid characters.")
         return v_stripped
+
+    @field_validator("decontaminate")
+    @classmethod
+    def validate_eval_sets(cls, v: list[str]) -> list[str]:
+        unknown = [k for k in v if k not in EVAL_SETS]
+        if unknown:
+            raise ValueError(f"Unknown benchmark(s): {', '.join(unknown)}. Choose from: {', '.join(EVAL_SETS)}.")
+        return list(dict.fromkeys(v))
 
     @field_validator("hf_repo")
     @classmethod

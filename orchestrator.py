@@ -65,27 +65,50 @@ async def _generate(
     judge = None
     if cfg.uses_judge:
         judge = _make_client(_endpoint(cfg, cfg.judge_model or cfg.teacher_models[0], temperature=0.0))
+    embedder = None
+    if cfg.enable_dedup and cfg.embedding_model:
+        embedder = _make_client(_endpoint(cfg, cfg.embedding_model))
     settings = SynthSettings(
         target=cfg.dataset_size,
         evolve=cfg.evolves,
         judge_threshold=cfg.judge_threshold,
         dedup_threshold=0.85 if cfg.enable_dedup else None,
+        semantic_threshold=cfg.semantic_dedup_threshold,
     )
+    extra = [c for c in (judge, embedder) if c is not None]
     try:
-        records, stats = await synthesize(chunks, teachers, settings, judge=judge, progress=progress)
+        records, stats = await synthesize(chunks, teachers, settings, judge=judge, progress=progress,
+                                          embedder=embedder)
     finally:
-        for client in [*teachers, *([judge] if judge else [])]:
+        for client in [*teachers, *extra]:
             await client.close()
     usage = {f"teacher:{t.settings.model}": t.usage.as_dict() for t in teachers}
     if judge:
         usage[f"judge:{judge.settings.model}"] = judge.usage.as_dict()
+    if embedder:
+        usage[f"embeddings:{embedder.settings.model}"] = embedder.usage.as_dict()
     return records, stats, usage
 
 
 # ---------------------------------------------------------------------------
-# Sanitizing
+# Decontamination and sanitizing
 # ---------------------------------------------------------------------------
-def _sanitize(records: list[Record], run: RunDir) -> list[Record]:
+def _decontaminate(records: list[Record], cfg: DistillationConfig, run: RunDir) -> list[Record]:
+    """Drop records that overlap the selected public benchmarks."""
+    from pipeline import decontam
+
+    kept, removed = decontam.decontaminate(records, cfg.decontaminate, loader=decontam.load_eval_texts)
+    run.update_manifest(decontamination=removed)
+    logger.info("Benchmark overlap removed", **removed)
+    if not kept:
+        raise RuntimeError(
+            f"All {len(records)} records overlap the selected benchmarks "
+            f"({', '.join(cfg.decontaminate)}); nothing is left to export."
+        )
+    return kept
+
+
+def _sanitize(records: list[Record], cfg: DistillationConfig, run: RunDir) -> list[Record]:
     """PII redaction, HTML cleaning, dedup and quality gates on canonical records.
 
     Raises instead of falling back to the unsanitized data: a user who asked
@@ -95,7 +118,8 @@ def _sanitize(records: list[Record], run: RunDir) -> list[Record]:
 
     kept, stats = sanitize_records(
         records,
-        SanitizerConfig(remove_pii=True, pii_mask=False, clean_html=True, deduplicate=True),
+        SanitizerConfig(remove_pii=True, pii_mask=False, clean_html=True, deduplicate=True,
+                        url_policy=cfg.pii_url_policy, presidio=cfg.pii_presidio),
     )
     run.update_manifest(sanitizer=asdict(stats))
     logger.info("Dataset sanitized", **asdict(stats))
@@ -197,11 +221,15 @@ def _run(
             f"{sum(stats.answers_filtered.values())} filtered answers). Check the model name, "
             "API key / endpoint and the logs, then try again."
         )
-    _progress(80)
+    _progress(75)
 
-    # -- Stage 5: optional sanitizing on canonical records -------------------
+    # -- Stage 5: optional benchmark decontamination and sanitizing ----------
+    if cfg.decontaminate:
+        records = _decontaminate(records, cfg, run)
+        counts["after_decontamination"] = len(records)
+    _progress(80)
     if cfg.sanitize_dataset:
-        records = _sanitize(records, run)
+        records = _sanitize(records, cfg, run)
         counts["after_sanitize"] = len(records)
     write_records(run.records, records)
     _progress(85)
