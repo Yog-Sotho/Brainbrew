@@ -17,7 +17,7 @@ readonly REQUIRED_PYTHON_MINOR=12
 readonly VENV_DIR=".venv"
 readonly ENV_FILE=".env"
 readonly ENV_SAMPLE=".env.sample"
-readonly REQUIREMENTS="requirements.txt"
+REQUIREMENTS="requirements.txt"   # core (OpenAI API mode); see section 11
 readonly LOG_FILE="install.log"
 
 # ANSI colours (disabled automatically when not a terminal)
@@ -61,6 +61,7 @@ SKIP_VENV=false
 SKIP_GPU_CHECK=false
 SKIP_TESTS=false
 NO_COLOUR=false
+WITH_TRAIN=false
 
 usage() {
   cat << EOF
@@ -72,6 +73,8 @@ Options:
   --no-venv         Skip virtual-environment creation (use system Python)
   --no-gpu-check    Skip CUDA / GPU detection
   --skip-tests      Skip the post-install import smoke tests
+  --train           Install LoRA training deps (Unsloth) instead of vLLM.
+                    The two cannot share one environment.
   --no-colour       Disable ANSI colours
   -h, --help        Show this help message
 
@@ -95,6 +98,7 @@ for arg in "$@"; do
     --no-venv)       SKIP_VENV=true         ;;
     --no-gpu-check)  SKIP_GPU_CHECK=true    ;;
     --skip-tests)    SKIP_TESTS=true        ;;
+    --train)         WITH_TRAIN=true        ;;
     --no-colour)     NO_COLOUR=true; RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; BOLD=''; RESET=''; MAGENTA='' ;;
     -h|--help)       usage                  ;;
     *)               warn "Unknown option: $arg -- ignoring" ;;
@@ -262,16 +266,19 @@ if [[ "$MODE" == "docker" ]]; then
     warn "Copied .env.sample -> .env. Edit it with real API keys before running the container."
   fi
 
-  log "Building Docker image: brainbrew ..."
-  docker build -t brainbrew . 2>&1 | tee -a "$LOG_FILE"
+  # GPU image (vLLM) only when a GPU is present; otherwise the slim API image.
+  DOCKER_TARGET="api"
+  [[ "$HAS_GPU" == true ]] && DOCKER_TARGET="gpu"
+  log "Building Docker image: brainbrew (target: ${DOCKER_TARGET}) ..."
+  docker build --target "$DOCKER_TARGET" -t brainbrew . 2>&1 | tee -a "$LOG_FILE"
 
   ok "Docker image built successfully."
   echo ""
   echo -e "${BOLD}${GREEN}Run with:${RESET}"
   if [[ "$HAS_GPU" == true ]]; then
-    echo "  docker run --gpus all -p 8501:8501 --env-file .env brainbrew"
+    echo "  docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env brainbrew"
   else
-    echo "  docker run -p 8501:8501 --env-file .env brainbrew"
+    echo "  docker run -p 127.0.0.1:8501:8501 --env-file .env brainbrew"
   fi
   echo "  Then open: http://localhost:8501"
   exit 0
@@ -351,33 +358,28 @@ if [[ "$HAS_GPU" == false ]]; then
   warn "but may fail at runtime without CUDA. That is expected."
 fi
 
-# Count packages for progress feedback
-TOTAL_PKGS=$(grep -cE '^\s*[^#]' "$REQUIREMENTS" 2>/dev/null || echo "?")
-log "Installing ${TOTAL_PKGS} packages (this may take 5-15 minutes on first run)..."
+# Pick the locked requirement set for this machine. All three files are
+# generated from uv.lock (`uv export`) and carry hashes, so pip verifies every
+# download.
+if [[ "$WITH_TRAIN" == true ]]; then
+  REQUIREMENTS="requirements-train.txt"
+  log "--train: installing LoRA training stack (no vLLM)."
+elif [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
+  REQUIREMENTS="requirements-vllm.txt"
+  log "GPU with >= 24 GB VRAM: installing vLLM stack."
+else
+  log "Installing core stack (OpenAI API mode)."
+fi
+[[ -f "$REQUIREMENTS" ]] || die "${REQUIREMENTS} not found. Run from the Brainbrew repo root."
 
-# Install with error isolation
-if "$PIP_CMD" install --quiet -r "$REQUIREMENTS" 2>&1 | tee -a "$LOG_FILE"; then
+# Count packages for progress feedback (hash continuation lines excluded)
+TOTAL_PKGS=$(grep -cE '^[A-Za-z0-9]' "$REQUIREMENTS" 2>/dev/null || echo "?")
+log "Installing ${TOTAL_PKGS} pinned packages from ${REQUIREMENTS} (this may take 5-15 minutes on first run)..."
+
+if "$PIP_CMD" install --quiet --require-hashes -r "$REQUIREMENTS" 2>&1 | tee -a "$LOG_FILE"; then
   ok "All dependencies installed successfully."
 else
-  warn "Batch install encountered errors. Attempting package-by-package install..."
-  FAILED_PKGS=()
-  while IFS= read -r pkg; do
-    # Skip blank lines and comments
-    [[ -z "$pkg" || "$pkg" =~ ^[[:space:]]*# ]] && continue
-    if ! "$PIP_CMD" install --quiet "$pkg" 2>>"$LOG_FILE"; then
-      warn "  x Failed: $pkg"
-      FAILED_PKGS+=("$pkg")
-    fi
-  done < "$REQUIREMENTS"
-
-  if [[ ${#FAILED_PKGS[@]} -gt 0 ]]; then
-    warn "The following packages failed to install:"
-    for pkg in "${FAILED_PKGS[@]}"; do
-      warn "  - $pkg"
-    done
-    warn "Common reasons: vllm/unsloth/bitsandbytes require CUDA + Linux."
-    warn "Check ${LOG_FILE} for full error output."
-  fi
+  die "Dependency install failed. See ${LOG_FILE}. vLLM and Unsloth require Linux + CUDA; on other systems use the default (core) install."
 fi
 
 # ---------------------------------------------------------------------------
@@ -524,7 +526,7 @@ elif [[ -f "${VENV_DIR}/Scripts/activate" ]]; then
 fi
 
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
-streamlit run app.py --server.port=8501 --server.address=0.0.0.0 "$@"
+streamlit run app.py --server.port=8501 --server.address="${BRAINBREW_HOST:-127.0.0.1}" "$@"
 RUNSCRIPT
 chmod +x run.sh
 ok "Created run.sh"
@@ -547,7 +549,7 @@ if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
   echo "[INFO] GPU detected -- enabling GPU passthrough."
 fi
 
-docker run ${GPU_FLAG} -p 8501:8501 --env-file .env brainbrew "$@"
+docker run ${GPU_FLAG} -p 127.0.0.1:8501:8501 --env-file .env brainbrew "$@"
 DOCKERSCRIPT
 chmod +x run_docker.sh
 ok "Created run_docker.sh"

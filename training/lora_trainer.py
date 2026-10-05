@@ -25,7 +25,7 @@ def _format_alpaca(examples: dict[str, list[str]], eos_token: str = "</s>") -> d
     """
     texts: list[str] = []
     for instruction, inp, output in zip(
-        examples["instruction"], examples["input"], examples["output"]
+        examples["instruction"], examples["input"], examples["output"], strict=True
     ):
         if inp and inp.strip():
             prompt = (

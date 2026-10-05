@@ -8,19 +8,19 @@ QUALITY_MODE_LABELS (friendly display names for the Streamlit UI), and OutputFor
 from __future__ import annotations
 
 import re
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
-class QualityMode(str, Enum):
+class QualityMode(StrEnum):
     """Controls the depth of Evol-Instruct evolution passes."""
     FAST = "fast"
     BALANCED = "balanced"
     RESEARCH = "research"
 
 
-class OutputFormat(str, Enum):
+class OutputFormat(StrEnum):
     """Supported dataset export formats."""
     ALPACA = "alpaca"
     SHAREGPT = "sharegpt"
@@ -149,9 +149,8 @@ class DistillationConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_publish_config(self) -> DistillationConfig:
-        if self.publish_dataset:
-            if not self.hf_repo or not self.hf_repo.strip():
-                raise ValueError("hf_repo is required when publish_dataset is enabled")
+        if self.publish_dataset and (not self.hf_repo or not self.hf_repo.strip()):
+            raise ValueError("hf_repo is required when publish_dataset is enabled")
         return self
 
     # ── FIX C-01: safe serialisation that never leaks secrets ────────────

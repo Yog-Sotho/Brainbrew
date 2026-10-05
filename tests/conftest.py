@@ -9,6 +9,7 @@ without a GPU — making it safe for CI/CD and non-technical contributors.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import types
@@ -27,6 +28,11 @@ def _make_stub(name: str, **attrs) -> types.ModuleType:
     for k, v in attrs.items():
         setattr(mod, k, v)
     return mod
+
+
+def _missing(name: str) -> bool:
+    """True when *name* is neither imported nor installed (so a stub is needed)."""
+    return name not in sys.modules and importlib.util.find_spec(name) is None
 
 
 def _install_heavy_stubs() -> None:
@@ -48,12 +54,7 @@ def _install_heavy_stubs() -> None:
     MockPipeline = MagicMock(name="Pipeline")
     sys.modules["distilabel.pipeline"].Pipeline = MockPipeline
 
-    # FIX C-05: Step base class stub — orchestrator.py imports this
-    MockStep = type("Step", (), {
-        "__init_subclass__": classmethod(lambda cls, **kw: None),
-        "process": lambda self, inputs: iter([inputs]),
-    })
-    # Make it a MagicMock that also acts as a base class
+    # FIX C-05: Step base class stub — orchestrator.py subclasses it
     sys.modules["distilabel.steps.base"].Step = MagicMock(name="Step")
 
     # Steps
@@ -94,13 +95,13 @@ def _install_heavy_stubs() -> None:
         sys.modules["transformers"] = tf
 
     # ── huggingface_hub ─────────────────────────────────────────────────────
-    if "huggingface_hub" not in sys.modules:
+    if _missing("huggingface_hub"):
         hfh = _make_stub("huggingface_hub")
         hfh.HfApi = MagicMock(name="HfApi")
         sys.modules["huggingface_hub"] = hfh
 
     # ── datasets ────────────────────────────────────────────────────────────
-    if "datasets" not in sys.modules:
+    if _missing("datasets"):
         ds = _make_stub("datasets")
         mock_ds = MagicMock()
         mock_ds.__getitem__ = MagicMock(return_value=MagicMock())
@@ -108,7 +109,7 @@ def _install_heavy_stubs() -> None:
         sys.modules["datasets"] = ds
 
     # ── structlog ───────────────────────────────────────────────────────────
-    if "structlog" not in sys.modules:
+    if _missing("structlog"):
         sl = _make_stub("structlog")
         sl.get_logger = MagicMock(return_value=MagicMock())
         sl.configure = MagicMock()
@@ -117,15 +118,13 @@ def _install_heavy_stubs() -> None:
 
     # ── langchain_text_splitters ─────────────────────────────────────────────
     # Only stub if not already installed (it IS in requirements.txt)
-    try:
-        import langchain_text_splitters
-    except ImportError:
+    if _missing("langchain_text_splitters"):
         lc = _make_stub("langchain_text_splitters")
         lc.RecursiveCharacterTextSplitter = MagicMock(name="RecursiveCharacterTextSplitter")
         sys.modules["langchain_text_splitters"] = lc
 
     # ── streamlit ────────────────────────────────────────────────────────────
-    if "streamlit" not in sys.modules:
+    if _missing("streamlit"):
         st = _make_stub("streamlit")
         for attr in ["set_page_config", "title", "caption", "header", "checkbox",
                      "text_input", "selectbox", "slider", "file_uploader", "button",
@@ -136,7 +135,7 @@ def _install_heavy_stubs() -> None:
         sys.modules["streamlit"] = st
 
     # ── dotenv ──────────────────────────────────────────────────────────────
-    if "dotenv" not in sys.modules:
+    if _missing("dotenv"):
         dotenv = _make_stub("dotenv")
         dotenv.load_dotenv = MagicMock()
         sys.modules["dotenv"] = dotenv

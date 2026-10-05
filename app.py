@@ -32,6 +32,32 @@ logger = structlog.get_logger(__name__)
 # ── Page config ──────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Brainbrew", page_icon="🧠", layout="wide")
+
+# ── Optional login gate ──────────────────────────────────────────────────────
+# Set BRAINBREW_REQUIRE_LOGIN=1 and an [auth] block in .streamlit/secrets.toml
+# (OIDC provider) before exposing the app beyond localhost.
+def _auth_configured() -> bool:
+    try:
+        return "auth" in st.secrets
+    except FileNotFoundError:  # no secrets.toml at all
+        return False
+
+
+if os.getenv("BRAINBREW_REQUIRE_LOGIN", "").strip().lower() in {"1", "true", "yes"}:
+    if not _auth_configured():
+        # Fail closed: never fall through to an unauthenticated app.
+        st.error(
+            "BRAINBREW_REQUIRE_LOGIN is set but no [auth] section was found in "
+            ".streamlit/secrets.toml. Configure an OIDC provider to continue."
+        )
+        st.stop()
+    if not st.user.is_logged_in:
+        st.title("🧠 Brainbrew")
+        st.info("This Brainbrew instance is private. Please log in.")
+        st.button("Log in", on_click=st.login, type="primary")
+        st.stop()
+    st.sidebar.button("Log out", on_click=st.logout)
+
 st.title("🧠 Brainbrew v1.2.0")
 st.caption("Production-grade synthetic dataset generator — GPU edition")
 
@@ -41,27 +67,30 @@ with st.sidebar:
     st.header("⚙️ Advanced Settings")
     use_vllm: bool = st.checkbox("Use vLLM (GPU required)", value=True)
 
+    # Server-side secrets are never used as widget values: Streamlit sends widget
+    # state to the browser, so a pre-filled password field discloses the key to
+    # every visitor. The env value is applied server-side as a fallback instead.
     openai_env_key = os.getenv("OPENAI_API_KEY", "")
     openai_key: str = st.text_input(
         "OpenAI API Key",
-        value=openai_env_key,
         type="password",
+        placeholder="Using server key" if openai_env_key else "sk-...",
         help="Enter your OpenAI API key. Get one at the [OpenAI API Keys page](https://platform.openai.com/api-keys).",
     )
     if openai_env_key:
-        st.caption("🔑 *API Key loaded automatically from environment*")
+        st.caption("🔑 *Server API key configured; leave blank to use it*")
     elif not use_vllm:
         st.caption("⚠️ *API Key required to run OpenAI models*")
 
     hf_env_token = os.getenv("HF_TOKEN", "")
     hf_token: str = st.text_input(
         "Hugging Face Token",
-        value=hf_env_token,
         type="password",
+        placeholder="Using server token" if hf_env_token else "hf_...",
         help="Enter your Hugging Face write token. Create one at the [Hugging Face Settings page](https://huggingface.co/settings/tokens).",
     )
     if hf_env_token:
-        st.caption("🔑 *HF Token loaded automatically from environment*")
+        st.caption("🔑 *Server HF token configured; leave blank to use it*")
 
     st.divider()
     st.subheader("🧪 Experimental")

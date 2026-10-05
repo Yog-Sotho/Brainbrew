@@ -1,0 +1,20 @@
+# Brainbrew server defaults. Override with STREAMLIT_* env vars or CLI flags
+# (e.g. the Docker image sets STREAMLIT_SERVER_ADDRESS=0.0.0.0 inside the
+# container; publish it on the host as -p 127.0.0.1:8501:8501).
+
+[server]
+# Listen on loopback only. Expose the app beyond this machine only behind
+# authentication (BRAINBREW_REQUIRE_LOGIN=1 + [auth] in secrets.toml).
+address = "127.0.0.1"
+# MB. Enforced by the server before the upload reaches app code; matches the
+# per-file limit in app.py.
+maxUploadSize = 50
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Show exception type + generic message in the browser; full messages and
+# tracebacks (which can contain paths or request details) go to the console.
+showErrorDetails = "type"

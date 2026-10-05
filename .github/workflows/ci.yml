@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.23"
+  PYTHON_VERSION: "3.12"
+
+# Actions are pinned to full commit SHAs (tag in the trailing comment);
+# Dependabot keeps them current.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - name: Ruff
+        run: uv run --locked --only-group dev ruff check . --output-format=github
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - name: Mypy
+        run: uv run --locked mypy app.py config.py orchestrator.py pipeline/ publish/ training/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      # Core install (OpenAI-API mode). GPU stacks are covered by `lockfile`
+      # resolution and the Docker build; the suite mocks GPU libraries.
+      - name: Pytest
+        run: uv run --locked pytest --cov --cov-report=term-missing --cov-fail-under=75
+
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
+      - name: requirements*.txt match uv.lock
+        run: |
+          set -euo pipefail
+          check() {
+            local out="$1"; shift
+            uv export --frozen --no-dev --no-emit-project "$@" -o "$out.check" >/dev/null
+            diff -u <(tail -n +3 "$out") <(tail -n +3 "$out.check") \
+              || { echo "::error file=$out::$out is stale. Regenerate with: uv export --frozen --no-dev --no-emit-project $* -o $out"; exit 1; }
+          }
+          check requirements.txt
+          check requirements-vllm.txt --extra vllm
+          check requirements-train.txt --extra train
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # One file per step: pip-audit rejects marker-split duplicate pins
+      # (e.g. numpy for py<3.13 / >=3.13) when several -r files are combined.
+      # CVE-2026-59890 (setuptools <83): sdist MANIFEST.in handling at build
+      # time only; vllm caps setuptools<81. Not reachable at runtime.
+      - name: pip-audit (core)
+        uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
+        with:
+          inputs: requirements.txt
+          require-hashes: true
+          no-deps: true
+          ignore-vulns: |
+            PYSEC-2026-3447
+      - name: pip-audit (vLLM)
+        uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
+        with:
+          inputs: requirements-vllm.txt
+          require-hashes: true
+          no-deps: true
+          ignore-vulns: |
+            PYSEC-2026-3447
+      # The train stack is capped by unsloth (torch<2.13, transformers<=5.5,
+      # datasets<4.4). Accepted until Phase 1 replaces the LoRA trainer:
+      #   PYSEC-2025-194  torch.jit.script local memory corruption (not used)
+      #   PYSEC-2026-3929 transformers tokenizer save_pretrained path traversal
+      #   PYSEC-2026-4174 transformers load_custom_generate (not used)
+      #   PYSEC-2026-3716 datasets folder-builder path traversal (json builder only)
+      - name: pip-audit (train)
+        uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
+        with:
+          inputs: requirements-train.txt
+          require-hashes: true
+          no-deps: true
+          ignore-vulns: |
+            PYSEC-2026-3447
+            PYSEC-2025-194
+            PYSEC-2026-3929
+            PYSEC-2026-4174
+            PYSEC-2026-3716
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The GPU target (multi-GB vLLM/torch stack) exceeds hosted-runner disk;
+      # build the API target, which exercises the same uv/lock/user layout.
+      - name: Build API image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: api
+          push: false
+          load: true
+          tags: brainbrew-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test container
+        run: |
+          set -euo pipefail
+          cid=$(docker run -d -p 127.0.0.1:8501:8501 brainbrew-api:ci)
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8501/_stcore/health; then echo; break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8501/_stcore/health
+          test "$(docker exec "$cid" id -u)" = "10001"
+          docker rm -f "$cid"

@@ -1,0 +1,2 @@
+# Fake API-key fixtures in tests (asserting they are redacted), not real secrets.
+27086539c6c365c378e6cd07057d8619bda6568b:tests/test_security.py:generic-api-key:28

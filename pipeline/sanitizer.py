@@ -124,10 +124,7 @@ def _mask_email(m: re.Match[str]) -> str:
     full = m.group(0)
     try:
         local, domain = full.split('@', 1)
-        if len(local) <= 1:
-            masked_local = '***'
-        else:
-            masked_local = local[0] + '***' + local[-1]
+        masked_local = '***' if len(local) <= 1 else local[0] + '***' + local[-1]
         return f"{masked_local}@{domain}"
     except ValueError:
         return '[PII_EMAIL]'
@@ -296,10 +293,10 @@ def check_quality(text: str, cfg: SanitizerConfig) -> str | None:
         return f'low unique-word ratio ({unique_ratio:.3f} < {cfg.min_unique_ratio})'
     # ⚡ Optimization: Replace character-by-character generator expression and `ord()` calls
     # with fast, C-level encoding length check to count ASCII characters, and bypass for pure ASCII.
-    if text.isascii():
-        ascii_ratio = 1.0
-    else:
-        ascii_ratio = len(text.encode('ascii', errors='ignore')) / len(text)
+    ascii_ratio = (
+        1.0 if text.isascii()
+        else len(text.encode('ascii', errors='ignore')) / len(text)
+    )
     if ascii_ratio < cfg.min_ascii_ratio:
         return f'low ASCII ratio ({ascii_ratio:.3f} < {cfg.min_ascii_ratio})'
     return None
