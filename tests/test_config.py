@@ -35,6 +35,9 @@ class TestQualityMode:
         with pytest.raises(ValueError):
             QualityMode("turbo")
 
+# A local OpenAI-compatible server needs no API key, so field tests stay focused.
+LOCAL_URL = "http://localhost:8000/v1"
+
 
 # ── OutputFormat ──────────────────────────────────────────────────────────────
 
@@ -97,10 +100,11 @@ class TestOutputFormatLabels:
 class TestDistillationConfigValid:
 
     def test_minimal_construction(self):
-        cfg = DistillationConfig(teacher_model="gpt-4o")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o")
         assert cfg.teacher_model == "gpt-4o"
         assert cfg.quality_mode == QualityMode.BALANCED
-        assert cfg.dataset_size == 2000
+        assert cfg.dataset_size == 500
+        assert cfg.base_url == LOCAL_URL
 
     def test_all_fields_explicit(self):
         cfg = DistillationConfig(
@@ -108,14 +112,16 @@ class TestDistillationConfigValid:
             dataset_size=500,
             quality_mode=QualityMode.RESEARCH,
             output_format=OutputFormat.SHAREGPT,
-            use_vllm=False,
             train_model=True,
             publish_dataset=True,
             hf_repo="user/repo",
             hf_token="hf_test",
             temperature=1.0,
             max_new_tokens=512,
-            batch_size=32,
+            concurrency=16,
+            request_timeout=300,
+            judge_model="gpt-4o",
+            judge_threshold=3,
             lora_rank=32,
             api_key="sk-test",
             use_semantic_chunking=True,
@@ -126,22 +132,33 @@ class TestDistillationConfigValid:
         assert cfg.output_format == OutputFormat.SHAREGPT
 
     def test_teacher_model_whitespace_stripped(self):
-        cfg = DistillationConfig(teacher_model="  gpt-4o  ")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="  gpt-4o  ")
         assert cfg.teacher_model == "gpt-4o"
 
     def test_comma_separated_teacher_model_accepted(self):
-        cfg = DistillationConfig(teacher_model="gpt-4o,gpt-3.5-turbo")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o,gpt-3.5-turbo")
         assert "gpt-4o" in cfg.teacher_model
 
-    def test_unused_fields_removed(self):
-        # judge_model was never used (returns in Phase 2); checkpoint resume lost data.
-        cfg = DistillationConfig(teacher_model="gpt-4o")
-        assert not hasattr(cfg, "judge_model")
-        assert not hasattr(cfg, "checkpoint_dir")
+    def test_removed_fields(self):
+        # In-process vLLM and distilabel batching are gone (Phase 2); resume lost data (Phase 1).
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o")
+        for gone in ("use_vllm", "batch_size", "checkpoint_dir"):
+            assert not hasattr(cfg, gone)
+
+    def test_quality_mode_controls_judge_and_evolve(self):
+        def mk(mode):
+            return DistillationConfig(base_url=LOCAL_URL, teacher_model="m", quality_mode=mode)
+        assert (mk("fast").uses_judge, mk("fast").evolves) == (False, False)
+        assert (mk("balanced").uses_judge, mk("balanced").evolves) == (True, False)
+        assert (mk("research").uses_judge, mk("research").evolves) == (True, True)
+
+    def test_teacher_models_list(self):
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model=" a , b ,")
+        assert cfg.teacher_models == ["a", "b"]
 
     def test_default_base_model_has_chat_template_family(self):
         from config import DEFAULT_BASE_MODEL
-        assert DistillationConfig(teacher_model="gpt-4o").base_model == DEFAULT_BASE_MODEL
+        assert DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o").base_model == DEFAULT_BASE_MODEL
 
     def test_public_dict_has_no_secrets(self):
         cfg = DistillationConfig(teacher_model="gpt-4o", api_key="sk-x", hf_token="hf_x")
@@ -150,15 +167,15 @@ class TestDistillationConfigValid:
         assert public["output_format"] == "alpaca"  # JSON-safe values
 
     def test_default_api_key_is_none(self):
-        cfg = DistillationConfig(teacher_model="gpt-4o")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o")
         assert cfg.api_key is None
 
     def test_default_output_format_is_alpaca(self):
-        cfg = DistillationConfig(teacher_model="gpt-4o")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o")
         assert cfg.output_format == OutputFormat.ALPACA
 
     def test_default_enable_dedup_is_true(self):
-        cfg = DistillationConfig(teacher_model="gpt-4o")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o")
         assert cfg.enable_dedup is True
 
 
@@ -168,47 +185,47 @@ class TestDistillationConfigInvalid:
 
     def test_blank_teacher_model_raises(self):
         with pytest.raises(ValidationError, match="Teacher model is required"):
-            DistillationConfig(teacher_model="")
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="")
 
     def test_whitespace_teacher_model_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="   ")
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="   ")
 
     def test_dataset_size_below_minimum_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", dataset_size=99)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", dataset_size=9)
 
     def test_dataset_size_above_maximum_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", dataset_size=50_001)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", dataset_size=50_001)
 
     def test_dataset_size_boundaries_accepted(self):
-        DistillationConfig(teacher_model="gpt-4o", dataset_size=100)
-        DistillationConfig(teacher_model="gpt-4o", dataset_size=50_000)
+        DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", dataset_size=10)
+        DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", dataset_size=50_000)
 
     def test_temperature_below_zero_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", temperature=-0.1)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", temperature=-0.1)
 
     def test_temperature_above_two_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", temperature=2.1)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", temperature=2.1)
 
     def test_temperature_boundaries_accepted(self):
-        DistillationConfig(teacher_model="gpt-4o", temperature=0.0)
-        DistillationConfig(teacher_model="gpt-4o", temperature=2.0)
+        DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", temperature=0.0)
+        DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", temperature=2.0)
 
     def test_max_new_tokens_below_minimum_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", max_new_tokens=127)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", max_new_tokens=127)
 
     def test_lora_rank_below_minimum_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", lora_rank=3)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", lora_rank=3)
 
-    def test_batch_size_zero_raises(self):
+    def test_concurrency_zero_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", batch_size=0)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", concurrency=0)
 
 
 # ── FIX C-01: safe_dict() ────────────────────────────────────────────────────
@@ -228,7 +245,7 @@ class TestSafeDict:
         assert "dataset_size" in safe
 
     def test_safe_dict_without_api_key_omits_field(self):
-        cfg = DistillationConfig(teacher_model="gpt-4o")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o")
         safe = cfg.safe_dict()
         assert "api_key" not in safe
 
@@ -274,38 +291,45 @@ class TestApiKeyNeverLeaks:
     ("research", QualityMode.RESEARCH),
 ])
 def test_quality_mode_round_trip(mode_str, expected):
-    cfg = DistillationConfig(teacher_model="gpt-4o", quality_mode=mode_str)
+    cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", quality_mode=mode_str)
     assert cfg.quality_mode == expected
 
 
 class TestCrossFieldRules:
     """Rules the UI used to duplicate; now only DistillationConfig enforces them."""
 
-    def test_api_key_required_without_vllm(self):
-        with pytest.raises(ValidationError, match="API key is required when not using vLLM"):
-            DistillationConfig(teacher_model="gpt-4o", use_vllm=False)
+    def test_api_key_required_for_openai(self):
+        with pytest.raises(ValidationError, match="API key is required for the OpenAI API"):
+            DistillationConfig(teacher_model="gpt-4o")
 
     def test_blank_api_key_counts_as_missing(self):
         with pytest.raises(ValidationError, match="API key is required"):
-            DistillationConfig(teacher_model="gpt-4o", use_vllm=False, api_key="   ")
+            DistillationConfig(teacher_model="gpt-4o", api_key="   ")
 
-    def test_no_api_key_needed_with_vllm(self):
-        assert DistillationConfig(teacher_model="m", use_vllm=True).api_key is None
+    def test_no_api_key_needed_for_a_local_server(self):
+        assert DistillationConfig(teacher_model="m", base_url=LOCAL_URL).api_key is None
+
+    def test_all_cross_field_problems_reported_together(self):
+        with pytest.raises(ValidationError) as exc:
+            DistillationConfig(teacher_model="m", publish_dataset=True)
+        msg = str(exc.value)
+        assert "API key is required" in msg and "hf_repo is required" in msg and "token is required" in msg
 
     def test_publish_requires_token(self):
         with pytest.raises(ValidationError, match="Hugging Face token is required"):
-            DistillationConfig(teacher_model="m", publish_dataset=True, hf_repo="user/repo")
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="m", publish_dataset=True, hf_repo="user/repo")
 
     def test_publish_requires_repo(self):
         with pytest.raises(ValidationError, match="hf_repo is required"):
-            DistillationConfig(teacher_model="m", publish_dataset=True, hf_token="hf_x")
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="m", publish_dataset=True, hf_token="hf_x")
 
     @pytest.mark.parametrize("field,value", [
-        ("max_new_tokens", 32769), ("batch_size", 1025), ("lora_rank", 257),
+        ("max_new_tokens", 32769), ("concurrency", 65), ("lora_rank", 257),
+        ("request_timeout", 1801), ("judge_threshold", 6), ("dataset_size", 50_001),
     ])
     def test_upper_bounds(self, field, value):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="m", **{field: value})
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="m", **{field: value})
 
 
 def test_check_hf_repo_name_shared_rule():
@@ -314,3 +338,26 @@ def test_check_hf_repo_name_shared_rule():
     for bad in ["user", "user/../x", "a/b/c", "user/my repo", ""]:
         with pytest.raises(ValueError, match="Invalid Hugging Face repository name"):
             check_hf_repo_name(bad)
+
+
+class TestEndpointUrl:
+
+    @pytest.mark.parametrize("url,expected", [
+        ("http://localhost:8000/v1", "http://localhost:8000/v1"),
+        ("https://api.example.com/v1/", "https://api.example.com/v1"),
+        ("  http://vllm:8000/v1  ", "http://vllm:8000/v1"),
+    ])
+    def test_valid(self, url, expected):
+        assert DistillationConfig(teacher_model="m", base_url=url).base_url == expected
+
+    @pytest.mark.parametrize("url", [
+        "ftp://host/v1", "localhost:8000", "http://", "https://user:pw@host/v1",
+        "http://host/v1?key=1", "http://host/v1#x", "http://host/v 1", "javascript:alert(1)",
+    ])
+    def test_invalid(self, url):
+        with pytest.raises(ValidationError):
+            DistillationConfig(teacher_model="m", base_url=url)
+
+    def test_blank_means_openai(self):
+        cfg = DistillationConfig(teacher_model="m", base_url="  ", api_key="sk-x")
+        assert cfg.base_url is None

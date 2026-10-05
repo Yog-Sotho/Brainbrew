@@ -35,15 +35,18 @@ dependencies = [
     "structlog>=25.1.0",
     "pdfminer.six>=20251107",
     "langchain-text-splitters>=1.1.2,<2",
-    "distilabel[openai]>=1.5.3,<1.6",
+    "openai>=3.24.0,<4",
+    "tenacity>=9.1.4",
+    "numpy>=2.0",
+    "xxhash>=3.5",
     "datasets>=3.4.1",
     "huggingface-hub>=0.34.0",
 ]
 
 [project.optional-dependencies]
-# Local GPU inference.
+# Local GPU inference server: provides `vllm serve`, an OpenAI-compatible endpoint
+# Brainbrew talks to like any other (see README, docker-compose.yml).
 vllm = [
-    "distilabel[vllm]>=1.5.3,<1.6",
     "vllm>=0.30.0; sys_platform == 'linux'",
 ]
 # Local LoRA fine-tuning (TRL + PEFT; 4-bit QLoRA via bitsandbytes on CUDA).
@@ -87,21 +90,12 @@ addopts = "-v --tb=short"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-# distilabel 1.5.3 (unmaintained upstream) raises ~50k Pydantic 2.11
-# deprecation warnings per pipeline run from its own modules. Only those are
-# silenced; warnings from Brainbrew code still show.
-filterwarnings = [
-    "ignore::DeprecationWarning:distilabel",
-    "ignore:The 'default' attribute with value None was provided:UserWarning",
-]
 
 # ── coverage ─────────────────────────────────────────────────────────────────
 
 [tool.coverage.run]
 source = ["."]
 omit = ["tests/*", "old/*", ".venv/*"]
-# Generation runs in a spawned child process (pipeline/generation.py).
-concurrency = ["multiprocessing", "thread"]
 
 # ── mypy ─────────────────────────────────────────────────────────────────────
 
@@ -115,7 +109,7 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = [
-    "distilabel.*",
+    "xxhash.*",
     "peft.*",
     "torch.*",
     "trl.*",

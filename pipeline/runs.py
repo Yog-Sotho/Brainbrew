@@ -72,10 +72,6 @@ class RunDir:
     def adapter_zip(self) -> Path:
         return self.root / "adapter.zip"
 
-    @property
-    def distilabel_cache(self) -> Path:
-        return self.root / ".distilabel"
-
     def dataset(self, output_format: str) -> Path:
         return self.root / f"dataset.{output_format}.jsonl"
 

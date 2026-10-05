@@ -46,7 +46,7 @@ class TestApiKeyContainment:
 
     def test_config_without_api_key_has_no_api_key_in_safe_dict(self):
         from config import DistillationConfig
-        cfg = DistillationConfig(teacher_model="gpt-4o")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o")
         safe = cfg.safe_dict()
         assert "api_key" not in safe
 
@@ -63,6 +63,9 @@ class TestApiKeyContainment:
         safe = cfg.safe_dict()
         assert secret not in repr(cfg)
         assert secret not in str(safe)
+
+# A local OpenAI-compatible server needs no API key, so field tests stay focused.
+LOCAL_URL = "http://localhost:8000/v1"
 
 
 # ---------------------------------------------------------------------------
@@ -190,14 +193,14 @@ class TestHfTokenAndRepoSecurity:
     def test_hf_token_not_in_repr_or_str(self):
         from config import DistillationConfig
         token = "hf_secret_token_12345"
-        cfg = DistillationConfig(teacher_model="gpt-4o", hf_token=token)
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", hf_token=token)
         assert token not in repr(cfg)
         assert token not in str(cfg)
 
     def test_hf_token_redacted_in_safe_dict(self):
         from config import DistillationConfig
         token = "hf_secret_token_12345"
-        cfg = DistillationConfig(teacher_model="gpt-4o", hf_token=token)
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", hf_token=token)
         safe = cfg.safe_dict()
         assert safe["hf_token"] == "***REDACTED***"
 
@@ -206,14 +209,14 @@ class TestHfTokenAndRepoSecurity:
 
         from config import DistillationConfig
         with pytest.raises(ValidationError, match="Invalid Hugging Face repository name"):
-            DistillationConfig(teacher_model="gpt-4o", hf_repo="invalid-repo-format-no-slash")
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", hf_repo="invalid-repo-format-no-slash")
 
     def test_publish_dataset_requires_hf_repo(self):
         from pydantic import ValidationError
 
         from config import DistillationConfig
         with pytest.raises(ValidationError, match="hf_repo is required when publish_dataset is enabled"):
-            DistillationConfig(teacher_model="gpt-4o", publish_dataset=True, hf_repo=None)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", publish_dataset=True, hf_repo=None)
 
     @pytest.mark.parametrize("path_traversal_repo", [
         "user/..",
@@ -226,7 +229,7 @@ class TestHfTokenAndRepoSecurity:
 
         from config import DistillationConfig
         with pytest.raises(ValidationError, match="Cannot contain path traversal sequences"):
-            DistillationConfig(teacher_model="gpt-4o", hf_repo=path_traversal_repo)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", hf_repo=path_traversal_repo)
 
     @pytest.mark.parametrize("path_traversal_repo", [
         "user/..",
@@ -256,7 +259,7 @@ class TestInputValidationSecurity:
         with pytest.raises(ValidationError, match="Secret key/token exceeds maximum allowed length"):
             DistillationConfig(teacher_model="gpt-4o", api_key=long_key)
         with pytest.raises(ValidationError, match="Secret key/token exceeds maximum allowed length"):
-            DistillationConfig(teacher_model="gpt-4o", hf_token=long_key)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", hf_token=long_key)
 
     def test_secrets_control_chars(self):
         from pydantic import ValidationError
@@ -272,9 +275,9 @@ class TestInputValidationSecurity:
         from config import DistillationConfig
         long_model = "a" * 256
         with pytest.raises(ValidationError, match="Model name exceeds maximum allowed length"):
-            DistillationConfig(teacher_model=long_model)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model=long_model)
         with pytest.raises(ValidationError, match="Model name exceeds maximum allowed length"):
-            DistillationConfig(teacher_model="gpt-4o", base_model=long_model)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", base_model=long_model)
 
     @pytest.mark.parametrize("bad_name", [
         "../../etc/passwd",
@@ -289,9 +292,9 @@ class TestInputValidationSecurity:
 
         from config import DistillationConfig
         with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
-            DistillationConfig(teacher_model=bad_name)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model=bad_name)
         with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
-            DistillationConfig(teacher_model="gpt-4o", base_model=bad_name)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", base_model=bad_name)
 
     @pytest.mark.parametrize("bad_multi_name", [
         "gpt-4o, /etc/passwd",
@@ -304,7 +307,7 @@ class TestInputValidationSecurity:
 
         from config import DistillationConfig
         with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
-            DistillationConfig(teacher_model=bad_multi_name)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model=bad_multi_name)
 
     @pytest.mark.parametrize("invalid_name", [
         "model; rm -rf /",
@@ -317,21 +320,21 @@ class TestInputValidationSecurity:
 
         from config import DistillationConfig
         with pytest.raises(ValidationError, match="Model name contains invalid characters"):
-            DistillationConfig(teacher_model=invalid_name)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model=invalid_name)
 
     def test_base_model_validation(self):
         from pydantic import ValidationError
 
         from config import DistillationConfig
-        cfg = DistillationConfig(teacher_model="gpt-4o", base_model="Qwen/Qwen3-4B-Instruct-2507")
+        cfg = DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", base_model="Qwen/Qwen3-4B-Instruct-2507")
         assert cfg.base_model == "Qwen/Qwen3-4B-Instruct-2507"
 
         with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
-            DistillationConfig(teacher_model="gpt-4o", base_model="../../etc/passwd")
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", base_model="../../etc/passwd")
         with pytest.raises(ValidationError, match="Model name exceeds maximum allowed length"):
-            DistillationConfig(teacher_model="gpt-4o", base_model="a" * 256)
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", base_model="a" * 256)
         with pytest.raises(ValidationError, match="Model name contains invalid characters"):
-            DistillationConfig(teacher_model="gpt-4o", base_model="model; rm -rf /")
+            DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", base_model="model; rm -rf /")
 
     @pytest.mark.parametrize("run_id", [
         "../../etc", "20261005-120000-abcdef/../x", "/abs/path", "", "20261005-120000-ABCDEF",

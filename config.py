@@ -10,12 +10,14 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class QualityMode(StrEnum):
-    """Controls the depth of Evol-Instruct evolution passes."""
+    """How much checking each pair gets: Fast = filters only; Balanced = + LLM judge;
+    Research = + harder (evolved) questions, still checked against the source."""
     FAST = "fast"
     BALANCED = "balanced"
     RESEARCH = "research"
@@ -31,15 +33,32 @@ class OutputFormat(StrEnum):
 
 # FIX C-07: app.py imports this dict for the selectbox display labels.
 QUALITY_MODE_LABELS: dict[QualityMode, str] = {
-    QualityMode.FAST:     "Fast ⚡ (quick & cheap)",
-    QualityMode.BALANCED: "Balanced 🎯 (sweet spot)",
-    QualityMode.RESEARCH: "Research 🔬 (maximum quality)",
+    QualityMode.FAST:     "Fast ⚡ (filters only, no judge)",
+    QualityMode.BALANCED: "Balanced 🎯 (every pair judged)",
+    QualityMode.RESEARCH: "Research 🔬 (harder questions + judge)",
 }
 
 # Hugging Face repo ids: "username/repo-slug". Shared with publish/hf_publisher.py.
 HF_REPO_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
 
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+
+
+def check_base_url(url: str) -> str:
+    """Validate an OpenAI-compatible API base URL (http/https, no credentials)."""
+    url = url.strip().rstrip("/")
+    if len(url) > 512:
+        raise ValueError("Endpoint URL exceeds 512 characters.")
+    if any(ord(c) < 33 or ord(c) > 126 for c in url):
+        raise ValueError("Endpoint URL contains spaces or control characters.")
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError("Endpoint URL must start with http:// or https:// and include a host.")
+    if parts.username or parts.password:
+        raise ValueError("Endpoint URL must not contain credentials; use the API key field.")
+    if parts.query or parts.fragment:
+        raise ValueError("Endpoint URL must not contain a query string or fragment.")
+    return url
 
 
 def check_hf_repo_name(name: str) -> str:
@@ -70,17 +89,20 @@ class DistillationConfig(BaseModel):
     """Type-safe, validated pipeline configuration."""
 
     teacher_model: str = Field(..., description="Model name or comma-separated list for multi-model ensemble")
-    dataset_size: int = Field(2000, ge=100, le=50000)
+    judge_model: str | None = Field(None, description="Model that grades pairs; defaults to the first teacher")
+    judge_threshold: int = Field(4, ge=1, le=5)
+    base_url: str | None = Field(None, description="OpenAI-compatible endpoint; None = api.openai.com")
+    dataset_size: int = Field(500, ge=10, le=50000)
     quality_mode: QualityMode = QualityMode.BALANCED
     output_format: OutputFormat = OutputFormat.ALPACA
-    use_vllm: bool = True
     train_model: bool = False
     base_model: str = DEFAULT_BASE_MODEL
     publish_dataset: bool = False
     hf_repo: str | None = None
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     max_new_tokens: int = Field(2048, ge=128, le=32768)
-    batch_size: int = Field(64, ge=1, le=1024)
+    concurrency: int = Field(8, ge=1, le=64)
+    request_timeout: int = Field(120, ge=10, le=1800)
     lora_rank: int = Field(16, ge=4, le=256)
     api_key: str | None = None
     hf_token: str | None = None
@@ -102,7 +124,14 @@ class DistillationConfig(BaseModel):
             return v_stripped
         return v
 
-    @field_validator("teacher_model", "base_model")
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        return check_base_url(v)
+
+    @field_validator("teacher_model", "base_model", "judge_model")
     @classmethod
     def validate_model_names(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
@@ -141,16 +170,20 @@ class DistillationConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_cross_field(self) -> DistillationConfig:
-        if not self.use_vllm and not self.api_key:
-            raise ValueError(
-                "An API key is required when not using vLLM "
-                "(any non-empty value for a local OpenAI-compatible server)."
+        """Report every cross-field problem at once (one per line)."""
+        problems = []
+        if self.base_url is None and not self.api_key:
+            problems.append(
+                "An API key is required for the OpenAI API "
+                "(a local server such as vLLM or Ollama needs no key)."
             )
         if self.publish_dataset:
             if not self.hf_repo:
-                raise ValueError("hf_repo is required when publish_dataset is enabled")
+                problems.append("hf_repo is required when publish_dataset is enabled")
             if not self.hf_token:
-                raise ValueError("A Hugging Face token is required when publish_dataset is enabled")
+                problems.append("A Hugging Face token is required when publish_dataset is enabled")
+        if problems:
+            raise ValueError("\n".join(problems))
         return self
 
     # ── FIX C-01: safe serialisation that never leaks secrets ────────────
@@ -162,6 +195,18 @@ class DistillationConfig(BaseModel):
         if "hf_token" in d:
             d["hf_token"] = "***REDACTED***"
         return d
+
+    @property
+    def teacher_models(self) -> list[str]:
+        return [m.strip() for m in self.teacher_model.split(",") if m.strip()]
+
+    @property
+    def uses_judge(self) -> bool:
+        return self.quality_mode != QualityMode.FAST
+
+    @property
+    def evolves(self) -> bool:
+        return self.quality_mode == QualityMode.RESEARCH
 
     def public_dict(self) -> dict[str, Any]:
         """JSON-safe settings with secrets removed entirely (for run manifests)."""
