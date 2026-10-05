@@ -48,6 +48,10 @@ checkpoints/
 
 # Tooling caches
 .coverage
+.coverage.*
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Generation run directories (datasets, adapters, manifests)
+runs/

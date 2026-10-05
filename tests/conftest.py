@@ -1,16 +1,16 @@
 """
 tests/conftest.py
 
-Shared fixtures, mock factories, and test helpers for the Brainbrew test suite.
+Shared fixtures and test helpers for the Brainbrew test suite.
 
-All heavy dependencies (distilabel, unsloth, vllm, transformers, huggingface_hub)
-are mocked at the module level so the suite runs on any machine — including those
-without a GPU — making it safe for CI/CD and non-technical contributors.
+The suite runs against the real core libraries (distilabel, datasets,
+streamlit, ...): pipeline tests drive the real distilabel DAG with the offline
+FakeLLM in tests/fake_llm.py, so mocks cannot drift from the real APIs. A few
+core libraries get stubs only when they are not installed at all.
 """
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 import types
 from pathlib import Path
@@ -37,62 +37,6 @@ def _missing(name: str) -> bool:
 
 def _install_heavy_stubs() -> None:
     """Inject minimal stubs so project imports don't fail on import-time."""
-
-    # ── distilabel ──────────────────────────────────────────────────────────
-    for mod_name in [
-        "distilabel",
-        "distilabel.pipeline",
-        "distilabel.steps",
-        "distilabel.steps.tasks",
-        "distilabel.steps.base",
-        "distilabel.llms",
-    ]:
-        if mod_name not in sys.modules:
-            sys.modules[mod_name] = _make_stub(mod_name)
-
-    # Pipeline — must support context manager protocol
-    MockPipeline = MagicMock(name="Pipeline")
-    sys.modules["distilabel.pipeline"].Pipeline = MockPipeline
-
-    # FIX C-05: Step base class stub — orchestrator.py subclasses it
-    sys.modules["distilabel.steps.base"].Step = MagicMock(name="Step")
-
-    # Steps
-    for cls_name in ["LoadDataFromDicts", "KeepColumns", "FilterRows",
-                     "RenameColumns", "FilterStep"]:
-        setattr(sys.modules["distilabel.steps"], cls_name, MagicMock(name=cls_name))
-
-    # Tasks
-    for cls_name in ["EvolInstruct", "TextGeneration"]:
-        setattr(sys.modules["distilabel.steps.tasks"], cls_name, MagicMock(name=cls_name))
-
-    # LLMs
-    for cls_name in ["OpenAILLM", "vLLM"]:
-        setattr(sys.modules["distilabel.llms"], cls_name, MagicMock(name=cls_name))
-
-    # ── unsloth ─────────────────────────────────────────────────────────────
-    if "unsloth" not in sys.modules:
-        unsloth = _make_stub("unsloth")
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.eos_token = "</s>"
-        FastLM = MagicMock()
-        FastLM.from_pretrained.return_value = (mock_model, mock_tokenizer)
-        FastLM.get_peft_config.return_value = MagicMock()
-        unsloth.FastLanguageModel = FastLM
-        sys.modules["unsloth"] = unsloth
-
-    # ── trl ─────────────────────────────────────────────────────────────────
-    if "trl" not in sys.modules:
-        trl = _make_stub("trl")
-        trl.SFTTrainer = MagicMock(name="SFTTrainer")
-        sys.modules["trl"] = trl
-
-    # ── transformers ────────────────────────────────────────────────────────
-    if "transformers" not in sys.modules:
-        tf = _make_stub("transformers")
-        tf.TrainingArguments = MagicMock(name="TrainingArguments")
-        sys.modules["transformers"] = tf
 
     # ── huggingface_hub ─────────────────────────────────────────────────────
     if _missing("huggingface_hub"):
@@ -148,6 +92,14 @@ _install_heavy_stubs()
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _isolated_runs_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every test writes run directories under its own tmp_path, never ./runs."""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("BRAINBREW_RUNS_DIR", str(runs))
+    return runs
+
+
 @pytest.fixture()
 def tiny_text() -> str:
     """A minimal, realistic document text for chunking tests."""
@@ -172,27 +124,6 @@ def large_text() -> str:
 
 
 @pytest.fixture()
-def raw_jsonl_file(tmp_path: Path) -> Path:
-    """A valid raw distilabel JSONL file with mixed 'output' and 'generation' keys."""
-    p = tmp_path / "raw.jsonl"
-    records = [
-        {"instruction": "What is AI?", "output": "AI stands for Artificial Intelligence, a field of computer science."},
-        {"instruction": "Explain ML.", "generation": "Machine Learning is a method of data analysis that automates model building."},
-        {"instruction": "Define NLP.", "output": "Natural Language Processing enables computers to understand human language."},
-        {"instruction": "What is RL?", "output": "Reinforcement Learning trains an agent via rewards and punishments."},
-        {"instruction": "Explain CNN.", "generation": "Convolutional Neural Networks are used primarily for image recognition tasks."},
-    ]
-    p.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
-    return p
-
-
-@pytest.fixture()
-def alpaca_output_file(tmp_path: Path) -> Path:
-    """Empty destination path for Alpaca export tests."""
-    return tmp_path / "alpaca.jsonl"
-
-
-@pytest.fixture()
 def base_config():
     """A minimal valid DistillationConfig with no GPU or API calls."""
     from config import DistillationConfig, QualityMode
@@ -201,7 +132,7 @@ def base_config():
         use_vllm=False,
         quality_mode=QualityMode.FAST,
         dataset_size=100,
-        api_key=None,
+        api_key="test-key",
     )
 
 

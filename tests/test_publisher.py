@@ -79,17 +79,17 @@ class TestRepoNameValidation:
 
     def test_invalid_repo_name_raises_valueerror(self, fake_dataset_path):
         from publish.hf_publisher import publish_dataset
-        with pytest.raises(ValueError, match="Invalid repo name"):
+        with pytest.raises(ValueError, match="Invalid Hugging Face repository name"):
             publish_dataset(fake_dataset_path, "no-slash-here", token="hf_test")
 
     def test_repo_name_with_spaces_raises(self, fake_dataset_path):
         from publish.hf_publisher import publish_dataset
-        with pytest.raises(ValueError, match="Invalid repo name"):
+        with pytest.raises(ValueError, match="Invalid Hugging Face repository name"):
             publish_dataset(fake_dataset_path, "user/my dataset", token="hf_test")
 
     def test_empty_repo_name_raises(self, fake_dataset_path):
         from publish.hf_publisher import publish_dataset
-        with pytest.raises(ValueError, match="Invalid repo name"):
+        with pytest.raises(ValueError, match="Invalid Hugging Face repository name"):
             publish_dataset(fake_dataset_path, "", token="hf_test")
 
     def test_valid_repo_name_accepted(self, fake_dataset_path, mock_hf_api, mock_dataset):

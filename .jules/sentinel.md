@@ -17,3 +17,8 @@
 **Vulnerability:** Although single model names were validated against path traversal (`..`) and absolute local paths, the comma-separated multi-model ensemble `teacher_model` configuration failed to validate each model name in the list individually. This allowed malicious local path or file inclusion bypasses (e.g., `gpt-4o, /etc/passwd`).
 **Learning:** Checking security constraints (such as `startswith` or `in` checks) on raw, multi-value container strings can be bypassed if the values are evaluated individually at execution time.
 **Prevention:** Always split and individually validate each element of multi-value configuration strings (like comma-separated lists) against path traversal, absolute local path, or other file execution boundaries.
+
+## 2026-10-05 - `$` Anchors Accept a Trailing Newline
+**Vulnerability:** `re.match(r"^...$", value)` also matches `value + "\n"`, because `$` matches just before a final newline. Run ids (`open_run`) and Hugging Face repo names were validated this way, so `"<valid-id>\n"` passed the allow-list.
+**Learning:** For allow-list validation, anchoring with `^...$` and `re.match` is not a full-string check.
+**Prevention:** Use `re.fullmatch` (or `\Z`) for every allow-list regex that guards identifiers, paths or repo names, and include a trailing-newline case in the tests.

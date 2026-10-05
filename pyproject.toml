@@ -15,7 +15,7 @@ authors = [
 ]
 keywords = [
     "llm", "synthetic-data", "dataset", "distillation", "training-data",
-    "machine-learning", "ai", "vllm", "unsloth", "lora",
+    "machine-learning", "ai", "vllm", "lora", "peft",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -41,17 +41,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local GPU inference. Mutually exclusive with `train` (see [tool.uv].conflicts).
+# Local GPU inference.
 vllm = [
     "distilabel[vllm]>=1.5.3,<1.6",
     "vllm>=0.30.0; sys_platform == 'linux'",
 ]
-# Local LoRA fine-tuning. Unsloth pins torch<2.13 / transformers<=5.5, which
-# vLLM>=0.30 (torch==2.13, transformers>=5.10.4) cannot share an environment with.
+# Local LoRA fine-tuning (TRL + PEFT; 4-bit QLoRA via bitsandbytes on CUDA).
 train = [
-    "unsloth>=2026.9.14; sys_platform == 'linux'",
-    "trl>=0.18.2; sys_platform == 'linux'",
-    "transformers>=4.51.3; sys_platform == 'linux'",
+    "torch>=2.6",
+    "transformers>=5.10.4",
+    "trl>=1.14.1",
+    "peft>=0.21.2",
+    "accelerate>=1.15.0",
+    "datasets>=4.7.0",
+    "bitsandbytes>=0.50.2; sys_platform == 'linux'",
 ]
 
 [dependency-groups]
@@ -75,13 +78,6 @@ packages = ["pipeline", "publish", "training"]
 
 # ── uv ───────────────────────────────────────────────────────────────────────
 
-[tool.uv]
-conflicts = [
-    [
-        { extra = "vllm" },
-        { extra = "train" },
-    ],
-]
 
 # ── pytest ───────────────────────────────────────────────────────────────────
 
@@ -91,12 +87,21 @@ addopts = "-v --tb=short"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# distilabel 1.5.3 (unmaintained upstream) raises ~50k Pydantic 2.11
+# deprecation warnings per pipeline run from its own modules. Only those are
+# silenced; warnings from Brainbrew code still show.
+filterwarnings = [
+    "ignore::DeprecationWarning:distilabel",
+    "ignore:The 'default' attribute with value None was provided:UserWarning",
+]
 
 # ── coverage ─────────────────────────────────────────────────────────────────
 
 [tool.coverage.run]
 source = ["."]
 omit = ["tests/*", "old/*", ".venv/*"]
+# Generation runs in a spawned child process (pipeline/generation.py).
+concurrency = ["multiprocessing", "thread"]
 
 # ── mypy ─────────────────────────────────────────────────────────────────────
 
@@ -111,7 +116,8 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = [
     "distilabel.*",
-    "unsloth.*",
+    "peft.*",
+    "torch.*",
     "trl.*",
     "transformers.*",
     "datasets.*",

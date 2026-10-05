@@ -1,356 +1,363 @@
 """
 tests/test_orchestrator.py
 
-Tests for orchestrator.py — run_distillation().
-
-All heavy dependencies are mocked. Tests verify orchestration logic,
-not the behaviour of distilabel/OpenAI internally.
-
-FIX C-04: patches now target the correct attribute names in the live
-orchestrator.py module:
-  - No more patching RenameColumns / FilterRows (don't exist)
-  - train_lora and publish_dataset are lazy-imported inside functions,
-    so we patch them at their source modules.
+Contract tests: the orchestrator builds and runs the *real* distilabel DAG
+(EvolInstruct -> TextGeneration -> ToCanonical -> KeepColumns) on CPU, with
+only the LLM replaced by the deterministic offline FakeLLM. Nothing in
+distilabel is mocked, so these tests fail if the pipeline does not validate,
+if pairs are misaligned, or if a stage drops every record.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from config import DistillationConfig, QualityMode
+import orchestrator
+from config import DistillationConfig, OutputFormat, QualityMode
+from pipeline.records import Record, read_records
+from pipeline.runs import open_run
+from tests.fake_llm import ANSWER_PREFIX, FakeLLM, answer, evolve
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _make_distiset(tmp_path: Path) -> MagicMock:
-    record = {"instruction": "Q?", "output": "Long enough answer to pass the length filter easily here."}
-
-    def fake_to_json(path: str) -> None:
-        Path(path).write_text(json.dumps(record) + "\n", encoding="utf-8")
-
-    mock_split = MagicMock()
-    mock_split.to_json.side_effect = fake_to_json
-    mock_default = MagicMock()
-    mock_default.__getitem__ = MagicMock(return_value=mock_split)
-    distiset = MagicMock()
-    distiset.__getitem__ = MagicMock(return_value=mock_default)
-    return distiset
+TOPICS = [
+    "Photosynthesis lets plants turn sunlight, water and carbon dioxide into glucose and oxygen.",
+    "The French Revolution began in 1789 and ended the absolute monarchy of Louis XVI.",
+    "TCP guarantees ordered delivery of bytes using sequence numbers and acknowledgements.",
+    "Plate tectonics explains earthquakes, volcanoes and the slow drift of the continents.",
+    "Compound interest grows savings because interest is earned on previous interest.",
+    "Vaccines train the immune system by exposing it to a harmless form of a pathogen.",
+]
 
 
-def _run_with_mocks(cfg, source_file, progress_callback=None, tmp_path=None):
-    """Run orchestrator with all heavy deps mocked.
-
-    FIX C-04: patches target correct module paths:
-      - orchestrator.Pipeline, orchestrator.OpenAILLM, orchestrator.vLLM etc.
-        are module-level imports and can be patched on orchestrator directly.
-      - train_lora / publish_dataset are lazy-imported from their source modules,
-        so they are patched at training.lora_trainer / publish.hf_publisher.
-    """
-    mock_pipeline_instance = MagicMock()
-    mock_pipeline_instance.__enter__.return_value = mock_pipeline_instance
-    mock_pipeline_instance.__exit__ = MagicMock(return_value=False)
-    mock_pipeline_instance.run.return_value = _make_distiset(tmp_path or Path("."))
-
-    output_dir = tmp_path / "output" if tmp_path else Path(".") / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    with patch("orchestrator.Pipeline", return_value=mock_pipeline_instance) as MockPipeline, \
-         patch("orchestrator.OpenAILLM", return_value=MagicMock()) as MockOpenAI, \
-         patch("orchestrator.vLLM", return_value=MagicMock()) as MockVLLM, \
-         patch("orchestrator.EvolInstruct", return_value=MagicMock()) as MockEvol, \
-         patch("orchestrator.TextGeneration", return_value=MagicMock()), \
-         patch("orchestrator.KeepColumns", return_value=MagicMock()), \
-         patch("orchestrator.LoadDataFromDicts", return_value=MagicMock()), \
-         patch("orchestrator.FilterAndRenameOutputs", return_value=MagicMock()), \
-         patch("orchestrator.export_dataset") as mock_export, \
-         patch("training.lora_trainer.train_lora") as mock_train, \
-         patch("publish.hf_publisher.publish_dataset") as mock_publish:
-
-        # Make export_dataset return a count
-        mock_export.return_value = 10
-
-        from orchestrator import run_distillation
-        result = run_distillation(
-            cfg, source_file, progress_callback, output_dir=output_dir
-        )
-
-        return result, {
-            "pipeline": mock_pipeline_instance,
-            "MockPipeline": MockPipeline,
-            "MockOpenAI": MockOpenAI,
-            "MockVLLM": MockVLLM,
-            "MockEvol": MockEvol,
-            "train_lora": mock_train,
-            "publish_dataset": mock_publish,
-            "export_dataset": mock_export,
-        }
+@pytest.fixture()
+def varied_source(tmp_path: Path) -> Path:
+    """A document whose chunks are all different, so dedup keeps them."""
+    paragraphs = [(t + " ") * 6 for t in TOPICS]
+    p = tmp_path / "source.txt"
+    p.write_text("\n\n".join(paragraphs), encoding="utf-8")
+    return p
 
 
-# ── Smoke test ────────────────────────────────────────────────────────────────
-
-def test_run_distillation_importable():
-    from orchestrator import run_distillation
-    assert callable(run_distillation)
-
-
-# ── Return value ──────────────────────────────────────────────────────────────
-
-class TestReturnValue:
-
-    def test_returns_path(self, base_config, source_file, tmp_path):
-        result, _ = _run_with_mocks(base_config, source_file, tmp_path=tmp_path)
-        assert isinstance(result, Path)
-
-    def test_returns_dataset_filename(self, base_config, source_file, tmp_path):
-        result, _ = _run_with_mocks(base_config, source_file, tmp_path=tmp_path)
-        assert "dataset.jsonl" in result.name
+def _cfg(**overrides) -> DistillationConfig:
+    base = {
+        "teacher_model": "gpt-4o-mini",
+        "use_vllm": False,
+        "api_key": "test-key",
+        "quality_mode": QualityMode.FAST,
+        "dataset_size": 100,
+        "batch_size": 4,
+    }
+    return DistillationConfig(**{**base, **overrides})
 
 
-# ── Security: api_key never logged ───────────────────────────────────────────
-
-class TestApiKeyNeverLogged:
-
-    def test_api_key_not_in_any_log_call(self, source_file, tmp_path):
-        cfg = DistillationConfig(
-            teacher_model="gpt-4o", use_vllm=False,
-            quality_mode=QualityMode.FAST, dataset_size=100,
-            api_key="sk-this-must-never-appear-in-logs",
-        )
-        logged_args = []
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        with patch("orchestrator.Pipeline", return_value=MagicMock(
-                run=MagicMock(return_value=_make_distiset(tmp_path)))), \
-             patch("orchestrator.OpenAILLM", return_value=MagicMock()), \
-             patch("orchestrator.vLLM", return_value=MagicMock()), \
-             patch("orchestrator.EvolInstruct", return_value=MagicMock()), \
-             patch("orchestrator.TextGeneration", return_value=MagicMock()), \
-             patch("orchestrator.KeepColumns", return_value=MagicMock()), \
-             patch("orchestrator.LoadDataFromDicts", return_value=MagicMock()), \
-             patch("orchestrator.FilterAndRenameOutputs", return_value=MagicMock()), \
-             patch("orchestrator.export_dataset", return_value=10), \
-             patch("training.lora_trainer.train_lora"), \
-             patch("publish.hf_publisher.publish_dataset"), \
-             patch("orchestrator.logger") as mock_logger:
-
-            mock_logger.info.side_effect = lambda msg, **kw: logged_args.append((msg, kw))
-
-            from orchestrator import run_distillation
-            run_distillation(cfg, source_file, output_dir=output_dir)
-
-        for msg, kwargs in logged_args:
-            assert "sk-this-must-never-appear-in-logs" not in str(msg) + str(kwargs)
+def _run(cfg: DistillationConfig, source: Path, **kwargs) -> orchestrator.RunResult:
+    with patch.object(orchestrator, "_create_llm", lambda name, cfg: FakeLLM()):
+        return orchestrator.run_distillation(cfg, source, **kwargs)
 
 
-# ── Progress callbacks ───────────────────────────────────────────────────────
-
-class TestRealProgressCallbacks:
-
-    def test_callback_called_multiple_times(self, base_config, source_file, tmp_path):
-        calls = []
-        _run_with_mocks(base_config, source_file,
-                        progress_callback=lambda p: calls.append(p), tmp_path=tmp_path)
-        assert len(calls) > 1, (
-            f"Progress callback must be called multiple times (got {len(calls)})."
-        )
-
-    def test_callback_called_with_100_on_success(self, base_config, source_file, tmp_path):
-        calls = []
-        _run_with_mocks(base_config, source_file,
-                        progress_callback=lambda p: calls.append(p), tmp_path=tmp_path)
-        assert 100 in calls
-
-    def test_progress_values_are_increasing(self, base_config, source_file, tmp_path):
-        calls = []
-        _run_with_mocks(base_config, source_file,
-                        progress_callback=lambda p: calls.append(p), tmp_path=tmp_path)
-        for i in range(1, len(calls)):
-            assert calls[i] >= calls[i - 1], (
-                f"Progress went backwards: {calls[i - 1]} -> {calls[i]}"
-            )
-
-    def test_progress_values_between_0_and_100(self, base_config, source_file, tmp_path):
-        calls = []
-        _run_with_mocks(base_config, source_file,
-                        progress_callback=lambda p: calls.append(p), tmp_path=tmp_path)
-        for p in calls:
-            assert 0 <= p <= 100, f"Progress value out of range: {p}"
-
-    def test_none_callback_does_not_raise(self, base_config, source_file, tmp_path):
-        _run_with_mocks(base_config, source_file, progress_callback=None, tmp_path=tmp_path)
+def _evolve_n(seed: str, n: int) -> str:
+    for _ in range(n):
+        seed = evolve(seed)
+    return seed
 
 
-# ── LLM backend selection ────────────────────────────────────────────────────
+# ── Real DAG contract ────────────────────────────────────────────────────────
 
-class TestLLMBackendSelection:
+class TestRealPipelineContract:
 
-    def test_openai_llm_used_when_use_vllm_false(self, source_file, tmp_path):
-        cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                                  quality_mode=QualityMode.FAST, dataset_size=100)
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        mocks["MockOpenAI"].assert_called()
-        mocks["MockVLLM"].assert_not_called()
+    @pytest.mark.parametrize("mode,evolutions", [
+        (QualityMode.FAST, 1),
+        (QualityMode.RESEARCH, 3),
+    ])
+    def test_pairs_are_aligned(self, mode, evolutions, varied_source):
+        """The kept instruction is the evolved one, and the output answers it."""
+        result = _run(_cfg(quality_mode=mode, enable_dedup=False), varied_source)
+        raw = read_records(result.run.raw)
+        assert raw, "pipeline produced no records"
+        for rec in raw:
+            assert rec.instruction == _evolve_n(rec.meta["seed"], evolutions)
+            assert rec.output == answer(rec.instruction)
+            assert rec.meta["model"] == "fake-llm"
 
-    def test_vllm_used_when_use_vllm_true(self, source_file, tmp_path):
-        cfg = DistillationConfig(teacher_model="meta-llama/Meta-Llama-3.1-8B-Instruct",
-                                  use_vllm=True, quality_mode=QualityMode.FAST, dataset_size=100)
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        mocks["MockVLLM"].assert_called()
-        mocks["MockOpenAI"].assert_not_called()
+    def test_seed_prompts_wrap_document_chunks(self, varied_source):
+        result = _run(_cfg(enable_dedup=False), varied_source)
+        seeds = [r.meta["seed"] for r in read_records(result.run.raw)]
+        assert all(s.startswith("Explain the following concept from the document") for s in seeds)
+        assert any("Photosynthesis" in s for s in seeds)
 
-    def test_first_model_from_comma_separated_list(self, source_file, tmp_path):
-        """Enhancement 4: multi-model splits prompts across models."""
-        cfg = DistillationConfig(teacher_model="gpt-4o,gpt-3.5-turbo", use_vllm=False,
-                                  quality_mode=QualityMode.FAST, dataset_size=100)
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        # Both models should be created
-        assert mocks["MockOpenAI"].call_count == 2
-
-
-# ── Conditional steps ────────────────────────────────────────────────────────
-
-class TestConditionalSteps:
-
-    def test_train_lora_called_when_train_model_true(self, source_file, tmp_path):
-        cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                                  quality_mode=QualityMode.FAST, dataset_size=100,
-                                  train_model=True)
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        mocks["train_lora"].assert_called_once()
-
-    def test_train_lora_not_called_when_train_model_false(self, source_file, tmp_path):
-        cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                                  quality_mode=QualityMode.FAST, dataset_size=100,
-                                  train_model=False)
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        mocks["train_lora"].assert_not_called()
-
-    def test_publish_called_when_enabled_with_repo(self, source_file, tmp_path):
-        cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                                  quality_mode=QualityMode.FAST, dataset_size=100,
-                                  publish_dataset=True, hf_repo="user/repo")
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        mocks["publish_dataset"].assert_called_once()
-
-    def test_publish_not_called_when_disabled(self, source_file, tmp_path):
-        cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                                  quality_mode=QualityMode.FAST, dataset_size=100,
-                                  publish_dataset=False, hf_repo="user/repo")
-        _, mocks = _run_with_mocks(cfg, source_file, tmp_path=tmp_path)
-        mocks["publish_dataset"].assert_not_called()
-
-    def test_publish_not_called_when_hf_repo_none(self, source_file, tmp_path):
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                               quality_mode=QualityMode.FAST, dataset_size=100,
-                               publish_dataset=True, hf_repo=None)
+    def test_dataset_size_caps_prompts(self, tmp_path):
+        source = tmp_path / "long.txt"
+        source.write_text("\n\n".join(f"Fact {i}: " + "word " * 180 for i in range(150)), encoding="utf-8")
+        result = _run(_cfg(dataset_size=100, enable_dedup=False), source)
+        assert result.run.read_manifest()["counts"]["chunks"] == 100
 
 
-# ── Pipeline execution ───────────────────────────────────────────────────────
-
-class TestPipelineExecution:
-
-    def test_pipeline_run_called(self, base_config, source_file, tmp_path):
-        _, mocks = _run_with_mocks(base_config, source_file, tmp_path=tmp_path)
-        mocks["pipeline"].run.assert_called()
-
-    def test_export_called_once(self, base_config, source_file, tmp_path):
-        _, mocks = _run_with_mocks(base_config, source_file, tmp_path=tmp_path)
-        mocks["export_dataset"].assert_called_once()
+_LAYOUT_KEY = {
+    OutputFormat.ALPACA: "instruction",
+    OutputFormat.SHAREGPT: "conversations",
+    OutputFormat.CHATML: "messages",
+    OutputFormat.OPENAI: "messages",
+}
 
 
-# ── Error conditions ─────────────────────────────────────────────────────────
+class TestFormatMatrix:
+    """Generate -> dedup -> sanitize -> score -> export, for every format."""
 
-class TestErrorConditions:
+    def test_every_format_keeps_records_and_scores_the_same(self, varied_source):
+        reports = {}
+        for fmt in OutputFormat:
+            result = _run(_cfg(output_format=fmt, sanitize_dataset=True), varied_source)
+            manifest = result.run.read_manifest()
+            assert manifest["counts"]["after_sanitize"] > 0, fmt
+            assert manifest["counts"]["exported"] == manifest["counts"]["after_sanitize"]
+            lines = result.dataset_path.read_text(encoding="utf-8").splitlines()
+            assert len(lines) == result.record_count
+            assert ANSWER_PREFIX in lines[0]  # the answer made it into the export
+            assert result.dataset_path.name == f"dataset.{fmt.value}.jsonl"
+            assert _LAYOUT_KEY[fmt] in json.loads(lines[0])
+            reports[fmt] = (result.record_count, result.quality)
+        assert len(set(json.dumps(r, sort_keys=True) for r in reports.values())) == 1
 
-    def test_missing_source_file_raises(self, base_config, tmp_path):
-        from orchestrator import run_distillation
+
+# ── Run directory + manifest ─────────────────────────────────────────────────
+
+class TestRunDirectory:
+
+    def test_files_and_manifest(self, varied_source, _isolated_runs_dir):
+        result = _run(_cfg(sanitize_dataset=True), varied_source)
+        run = open_run(result.run.run_id)
+        assert run.root.parent == _isolated_runs_dir
+        for path in (run.source, run.raw, run.records, result.dataset_path):
+            assert path.is_file()
+        manifest = run.read_manifest()
+        assert manifest["status"] == "succeeded"
+        assert manifest["config"]["teacher_model"] == "gpt-4o-mini"
+        assert manifest["quality"]["grade"] == result.quality["grade"]
+        assert manifest["sanitizer"]["kept"] == manifest["counts"]["after_sanitize"]
+        assert manifest["dataset_file"] == result.dataset_path.name
+
+    def test_secrets_never_written_to_run_dir(self, varied_source):
+        secret = "sk-this-must-never-be-written-anywhere"
+        result = _run(_cfg(api_key=secret), varied_source)
+        for path in result.run.root.rglob("*"):
+            if path.is_file():
+                assert secret not in path.read_text(encoding="utf-8", errors="ignore"), path
+
+    def test_serialized_pipeline_has_no_api_key(self, tmp_path):
+        """distilabel writes the pipeline (with its LLM) into the run's cache folder."""
+        from pipeline.generation import build_pipeline
+
+        secret = "sk-real-openai-llm-secret-0123456789"
+        llm = orchestrator._create_llm("gpt-4o-mini", _cfg(api_key=secret))
+        pipeline = build_pipeline(["Explain photosynthesis."], llm, 1, 4, "secret-check", tmp_path)
+        out = tmp_path / "pipeline.yaml"
+        pipeline.save(str(out), format="yaml")
+        assert out.is_file() and "OpenAILLM" in out.read_text(encoding="utf-8")
+        assert secret not in out.read_text(encoding="utf-8")
+
+    def test_failed_run_is_marked_in_manifest(self, varied_source, _isolated_runs_dir):
+        with patch.object(orchestrator, "generate_rows", side_effect=RuntimeError("teacher down")), \
+             pytest.raises(RuntimeError, match="teacher down"):
+            _run(_cfg(), varied_source)
+        (run_root,) = _isolated_runs_dir.iterdir()
+        manifest = open_run(run_root.name).read_manifest()
+        assert manifest["status"] == "failed"
+        assert "teacher down" in manifest["error"]
+
+    def test_existing_run_dir_is_used(self, varied_source):
+        run = orchestrator.create_run()
+        result = _run(_cfg(), varied_source, run=run)
+        assert result.run.root == run.root
+
+
+# ── Failure modes that used to be silent ────────────────────────────────────
+
+class TestFailures:
+
+    def test_sanitizer_removing_everything_raises(self, varied_source):
+        with patch("pipeline.sanitizer.check_quality", return_value="rejected"), \
+             pytest.raises(RuntimeError, match="Sanitizing removed all"):
+            _run(_cfg(sanitize_dataset=True), varied_source)
+
+    def test_no_usable_records_raises(self, varied_source):
+        with patch.object(orchestrator, "generate_rows", return_value=[]), \
+             pytest.raises(RuntimeError, match="no usable records"):
+            _run(_cfg(), varied_source)
+
+    def test_missing_source_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
-            run_distillation(base_config, Path("/nonexistent/path/source.txt"),
-                             output_dir=tmp_path)
+            _run(_cfg(), tmp_path / "nope.txt")
 
-    def test_empty_source_file_raises(self, base_config, tmp_path):
+    def test_empty_source_raises(self, tmp_path):
         empty = tmp_path / "empty.txt"
         empty.write_text("", encoding="utf-8")
         with pytest.raises(ValueError, match="empty"):
-            _run_with_mocks(base_config, empty, tmp_path=tmp_path)
+            _run(_cfg(), empty)
 
-    def test_large_source_file_raises_valueerror(self, base_config, tmp_path):
-        from orchestrator import MAX_SOURCE_BYTES
+    def test_oversized_source_raises(self, tmp_path):
         huge = tmp_path / "huge.txt"
-        huge.write_bytes(b"x" * (MAX_SOURCE_BYTES + 1))
+        huge.write_bytes(b"x" * (orchestrator.MAX_SOURCE_BYTES + 1))
         with pytest.raises(ValueError, match="exceeds"):
-            _run_with_mocks(base_config, huge, tmp_path=tmp_path)
+            _run(_cfg(), huge)
 
 
-# ── Quality mode -> num_evolutions ───────────────────────────────────────────
+# ── LLM construction ─────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("mode,expected_evolutions", [
-    (QualityMode.FAST, 1),
-    (QualityMode.BALANCED, 2),
-    (QualityMode.RESEARCH, 3),
-])
-def test_quality_mode_controls_num_evolutions(mode, expected_evolutions, source_file, tmp_path):
-    cfg = DistillationConfig(teacher_model="gpt-4o", use_vllm=False,
-                              quality_mode=mode, dataset_size=100)
+class TestCreateLLM:
 
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
+    def test_openai_gets_generation_kwargs(self):
+        llm = orchestrator._create_llm("gpt-4o-mini", _cfg(temperature=0.3, max_new_tokens=512))
+        assert type(llm).__name__ == "OpenAILLM"
+        assert llm.generation_kwargs == {"max_new_tokens": 512, "temperature": 0.3}
 
-    with patch("orchestrator.Pipeline", return_value=MagicMock(
-            run=MagicMock(return_value=_make_distiset(tmp_path)))), \
-         patch("orchestrator.OpenAILLM", return_value=MagicMock()), \
-         patch("orchestrator.vLLM", return_value=MagicMock()), \
-         patch("orchestrator.EvolInstruct", return_value=MagicMock()) as MockEvol, \
-         patch("orchestrator.TextGeneration", return_value=MagicMock()), \
-         patch("orchestrator.KeepColumns", return_value=MagicMock()), \
-         patch("orchestrator.LoadDataFromDicts", return_value=MagicMock()), \
-         patch("orchestrator.FilterAndRenameOutputs", return_value=MagicMock()), \
-         patch("orchestrator.export_dataset", return_value=10), \
-         patch("training.lora_trainer.train_lora"), \
-         patch("publish.hf_publisher.publish_dataset"):
-
-        from orchestrator import run_distillation
-        run_distillation(cfg, source_file, output_dir=output_dir)
-
-    _, kwargs = MockEvol.call_args
-    assert kwargs.get("num_evolutions") == expected_evolutions
+    def test_vllm_gets_generation_kwargs(self):
+        llm = orchestrator._create_llm("some/model", _cfg(use_vllm=True, max_new_tokens=256))
+        assert type(llm).__name__ == "vLLM"
+        assert llm.generation_kwargs["max_new_tokens"] == 256
 
 
-# ── Enhancement 10: quality scoring ──────────────────────────────────────────
+class TestToCanonical:
 
-class TestQualityScoring:
+    def test_filters_failed_and_short_rows(self):
+        from pipeline.steps import ToCanonical
 
-    def test_score_dataset_importable(self):
-        from orchestrator import score_dataset
-        assert callable(score_dataset)
-
-    def test_empty_file_returns_disaster(self, tmp_path):
-        from orchestrator import score_dataset
-        p = tmp_path / "empty.jsonl"
-        p.write_text("", encoding="utf-8")
-        result = score_dataset(p)
-        assert result["grade"] == "DISASTER"
-
-    def test_nonexistent_file_returns_disaster(self, tmp_path):
-        from orchestrator import score_dataset
-        result = score_dataset(tmp_path / "nonexistent.jsonl")
-        assert result["grade"] == "DISASTER"
-
-    def test_good_dataset_scores_above_bad(self, tmp_path):
-        from orchestrator import score_dataset
-        p = tmp_path / "good.jsonl"
-        records = [
-            {"instruction": f"Unique question number {i}?", "output": "A " * 100}
-            for i in range(200)
+        step = ToCanonical(min_length=10)
+        rows = [
+            {"instruction": "seed", "evolved_instruction": "evolved", "generation": "long enough answer"},
+            {"instruction": "seed", "evolved_instruction": None, "generation": "long enough answer"},
+            {"instruction": "seed", "evolved_instruction": "evolved", "generation": "short"},
+            {"instruction": "seed", "evolved_instruction": "evolved", "generation": None},
         ]
-        p.write_text(
-            "\n".join(json.dumps(r) for r in records), encoding="utf-8"
-        )
-        result = score_dataset(p)
-        assert result["grade"] in ("SUPER", "GOOD", "NORMAL")
-        assert result["record_count"] == 200
+        (out,) = list(step.process(rows))
+        assert out == [{**rows[0], "seed": "seed", "instruction": "evolved", "output": "long enough answer"}]
+
+
+def test_split_prompts_gives_remainder_to_last_model():
+    parts = orchestrator._split_prompts([str(i) for i in range(7)], 3)
+    assert [len(p) for p in parts] == [2, 2, 3]
+    assert sum(parts, []) == [str(i) for i in range(7)]
+
+
+def test_multi_model_runs_one_pipeline_per_model(varied_source):
+    names = []
+    real_generate = orchestrator.generate_rows
+
+    def spy(*args, **kwargs):
+        names.append(args[4])
+        return real_generate(*args, **kwargs)
+
+    with patch.object(orchestrator, "generate_rows", side_effect=spy):
+        result = _run(_cfg(teacher_model="model-a,model-b", enable_dedup=False), varied_source)
+    assert names == [f"brainbrew-{result.run.run_id}-m0", f"brainbrew-{result.run.run_id}-m1"]
+    assert result.run.read_manifest()["counts"]["generated"] == result.run.read_manifest()["counts"]["chunks"]
+
+
+# ── Progress, logging, optional stages ───────────────────────────────────────
+
+class TestProgressAndLogging:
+
+    def test_progress_increases_to_100(self, varied_source):
+        values: list[int] = []
+        _run(_cfg(), varied_source, progress_callback=values.append)
+        assert values == sorted(values)
+        assert values[-1] == 100
+        assert all(0 <= v <= 100 for v in values)
+
+    def test_api_key_not_logged(self, varied_source):
+        secret = "sk-this-must-never-appear-in-logs"
+        logged: list[str] = []
+        with patch.object(orchestrator, "logger") as log:
+            log.info.side_effect = lambda msg, **kw: logged.append(f"{msg} {kw}")
+            _run(_cfg(api_key=secret), varied_source)
+        assert logged and not any(secret in line for line in logged)
+
+    def test_root_logging_untouched_by_pipeline(self, varied_source):
+        """distilabel replaces root handlers; that must stay inside the child process."""
+        import logging
+
+        root = logging.getLogger()
+        before = list(root.handlers)
+        _run(_cfg(), varied_source)
+        assert root.handlers == before
+
+
+class TestOptionalStages:
+
+    def test_training_uses_canonical_records_and_zips_adapter(self, varied_source):
+        def fake_train(records_path, base_model, output_dir, lora_rank):
+            assert read_records(records_path)  # canonical, whatever the export format
+            output_dir.mkdir(parents=True)
+            (output_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+            return output_dir
+
+        with patch("training.lora_trainer.train_lora", side_effect=fake_train) as train:
+            result = _run(_cfg(train_model=True, lora_rank=32, output_format=OutputFormat.SHAREGPT), varied_source)
+        args = train.call_args.args
+        assert args[0] == result.run.records and args[2] == result.run.adapter_dir and args[3] == 32
+        assert result.adapter_zip is not None and result.adapter_zip.is_file()
+        assert result.run.read_manifest()["adapter_file"] == "adapter.zip"
+
+    def test_training_not_called_by_default(self, varied_source):
+        with patch("training.lora_trainer.train_lora") as train:
+            result = _run(_cfg(), varied_source)
+        train.assert_not_called()
+        assert result.adapter_zip is None
+
+    def test_publish_uploads_the_formatted_dataset(self, varied_source):
+        cfg = _cfg(publish_dataset=True, hf_repo="user/my-dataset", hf_token="hf_x")
+        with patch("publish.hf_publisher.publish_dataset") as publish:
+            result = _run(cfg, varied_source)
+        publish.assert_called_once_with(str(result.dataset_path), "user/my-dataset", "hf_x")
+        assert result.published_repo == "user/my-dataset"
+
+    def test_publish_not_called_by_default(self, varied_source):
+        with patch("publish.hf_publisher.publish_dataset") as publish:
+            _run(_cfg(), varied_source)
+        publish.assert_not_called()
+
+
+def test_records_file_matches_exported_count(varied_source):
+    result = _run(_cfg(sanitize_dataset=True), varied_source)
+    assert len(read_records(result.run.records)) == result.record_count
+    assert all(isinstance(r, Record) for r in read_records(result.run.records))
+
+
+# ── Runs off the main thread (Streamlit script threads) ─────────────────────
+
+def test_runs_from_a_worker_thread(varied_source):
+    """Pipeline.run installs a SIGINT handler, which only works on a main thread."""
+    import threading
+
+    outcome: dict[str, object] = {}
+
+    def target() -> None:
+        try:
+            outcome["result"] = _run(_cfg(), varied_source)
+        except BaseException as exc:  # pragma: no cover - reported below
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join(timeout=300)
+    assert "error" not in outcome, outcome.get("error")
+    assert outcome["result"].record_count > 0
+
+
+def _explode(message: str) -> None:
+    raise ValueError(message)
+
+
+class _FailsInChild:
+    """Unpickling this raises, i.e. the failure happens inside the child process."""
+
+    def __reduce__(self):
+        return (_explode, ("boom from the child",))
+
+
+def test_child_process_error_is_reported(tmp_path):
+    from pipeline.generation import generate_rows
+
+    with pytest.raises(RuntimeError, match="Generation failed: ValueError: boom from the child"):
+        generate_rows(["prompt"], _FailsInChild(), 1, 4, "fails", tmp_path)

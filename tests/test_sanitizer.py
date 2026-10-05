@@ -74,6 +74,31 @@ def test_clean_text():
     assert clean_text(html_text, remove_html=True) == "Hello World !"
 
 
+def test_clean_text_preserves_line_structure():
+    """Answers keep paragraphs, lists and code indentation (training data)."""
+    text = "Steps:\n\n\n\n1. Install\n2. Run\n\n```python\ndef f():\n    return 1   \n```\r\nDone."
+    assert clean_text(text) == "Steps:\n\n1. Install\n2. Run\n\n```python\ndef f():\n    return 1\n```\nDone."
+
+
+def test_sanitize_records_keeps_meta_and_cleans_text():
+    from pipeline.records import Record
+    from pipeline.sanitizer import sanitize_records
+
+    recs = [
+        Record(instruction="Explain <b>photosynthesis</b> to a student, please.",
+               output="Plants convert light into chemical energy.\nContact me at jane.doe@example.com for more details on this.",
+               meta={"seed": "s"}),
+        Record(instruction="hi", output="ok"),  # fails the quality gate
+    ]
+    kept, stats = sanitize_records(recs, SanitizerConfig())
+    assert stats.total == 2 and stats.kept == 1 and stats.filtered_quality == 1
+    assert stats.pii_redacted == 1
+    assert kept[0].meta == {"seed": "s"}
+    assert "<b>" not in kept[0].instruction
+    assert "jane.doe@example.com" not in kept[0].output
+    assert "\n" in kept[0].output
+
+
 def test_check_quality():
     cfg = SanitizerConfig(
         min_chars=10,

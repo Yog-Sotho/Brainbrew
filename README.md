@@ -48,13 +48,13 @@
   <li><strong>Dataset deduplication</strong> — exact-match + near-duplicate removal via shingle Jaccard</li>
   <li><strong>Quality scoring</strong> — SUPER / GOOD / NORMAL / BAD / DISASTER grades after generation</li>
   <li><strong>4 export formats</strong> — Alpaca, ShareGPT, ChatML, and OpenAI fine-tuning JSONL</li>
-  <li><strong>vLLM or OpenAI</strong> — choose speed (GPU) or zero-setup (API)</li>
-  <li><strong>Auto LoRA training</strong> — optional one-click fine-tune with Unsloth</li>
+  <li><strong>vLLM or any OpenAI-compatible API</strong> — local GPU speed, OpenAI, or your own server (Ollama, llama.cpp, vLLM serve...)</li>
+  <li><strong>Auto LoRA training</strong> — optional one-click fine-tune with TRL + PEFT (QLoRA on NVIDIA GPUs)</li>
   <li><strong>Hugging Face publish</strong> — one checkbox and your dataset is live on the Hub</li>
-  <li><strong>Resume support</strong> — crashed runs resume from the last completed batch</li>
-  <li><strong>Error handling &amp; progress bars</strong> — because crashes are for amateurs</li>
+  <li><strong>Every run is kept</strong> — datasets, adapters and a manifest land in <code>runs/&lt;run-id&gt;/</code> and survive page reloads</li>
+  <li><strong>Error handling &amp; progress bars</strong> — failures are shown in the UI and recorded in the run manifest</li>
   <li><strong>Docker ready</strong> — run it anywhere without summoning the dependency demon</li>
-  <li><strong>260 automated tests</strong> — CI runs pytest, ruff, mypy, pip-audit, gitleaks, and a Docker build on every PR</li>
+  <li><strong>~300 automated tests</strong> — the real distilabel pipeline and real LoRA training run in CI on every PR</li>
 </ul>
 
 <p>In short: it's what every AI guy <em>wanted</em> and never found anywhere.</p>
@@ -65,13 +65,13 @@
 <ul>
   <li><strong>Quality Modes</strong>: Fast (cheap &amp; quick), Balanced (sweet spot), Research (maximum brain juice)</li>
   <li><strong>Output Formats</strong>: Alpaca, ShareGPT, ChatML, OpenAI — pick what your training framework needs</li>
-  <li><strong>Smart Filtering</strong>: Automatic refusal cleaning + quality scoring dashboard</li>
+  <li><strong>Clean &amp; sanitize</strong>: PII redaction, HTML cleanup and quality gates, applied the same way to every export format</li>
+  <li><strong>Quality dashboard</strong>: grade, record count, answer length and uniqueness after every run</li>
   <li><strong>Multi-Model Ensemble</strong>: Split prompts across multiple teacher models for diversity</li>
   <li><strong>Deduplication</strong>: Exact hash + near-duplicate Jaccard filtering</li>
   <li><strong>Cost Estimator</strong>: See estimated cost and time before you click Generate</li>
   <li><strong>Live Stats</strong>: Record count, average output length, uniqueness ratio</li>
   <li><strong>Dataset Preview</strong>: See the first 5 examples before downloading</li>
-  <li><strong>Checkpoint/Resume</strong>: Large runs save state for crash recovery</li>
   <li><strong>Pydantic Config</strong>: Type-safe everything (no more surprise crashes)</li>
 </ul>
 
@@ -89,15 +89,16 @@ cd Brainbrew</code></pre>
 <p>The installer handles everything: Python version check, virtual environment, pip dependencies, GPU detection, and <code>.env</code> setup.</p>
 
 <h3>3. Or install manually</h3>
-<p>Dependencies are locked in <code>uv.lock</code>. Pick <strong>one</strong> stack — vLLM and Unsloth cannot share an environment:</p>
+<p>Dependencies are locked in <code>uv.lock</code>. Add the extras you need:</p>
 <pre><code># with uv (recommended)
 uv sync                    # core: OpenAI API mode, any OS
 uv sync --extra vllm       # + local GPU inference (Linux, NVIDIA)
-uv sync --extra train      # + LoRA training with Unsloth (Linux, NVIDIA)
+uv sync --extra train      # + LoRA training with TRL + PEFT (an NVIDIA GPU for real models)
+uv sync --extra vllm --extra train   # both
 
 # or with pip (hash-pinned exports of the same lock)
 python3.12 -m venv .venv &amp;&amp; source .venv/bin/activate
-pip install --require-hashes -r requirements.txt          # or requirements-vllm.txt / requirements-train.txt
+pip install --require-hashes -r requirements.txt          # or requirements-vllm.txt / -train.txt / -gpu.txt (both)
 cp .env.sample .env</code></pre>
 
 <p>Edit <code>.env</code>:</p>
@@ -121,9 +122,12 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env brainbrew
 docker build --target api -t brainbrew-api .
 docker run -p 127.0.0.1:8501:8501 --env-file .env brainbrew-api
 
-# GPU image for LoRA training instead of vLLM
-docker build --build-arg GPU_EXTRA=train -t brainbrew-train .</code></pre>
-<p>Images run as a non-root user, and <code>.env</code> / <code>.streamlit/secrets.toml</code> are never copied into them (see <code>.dockerignore</code>).</p>
+# GPU image without the LoRA training stack
+docker build --build-arg GPU_EXTRAS=vllm -t brainbrew-vllm .
+
+# Keep runs (datasets, adapters) across container restarts
+docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/app/runs brainbrew</code></pre>
+<p>Images run as a non-root user, and <code>.env</code> / <code>.streamlit/secrets.toml</code> are never copied into them (see <code>.dockerignore</code>). The default GPU image includes both vLLM and the LoRA training stack.</p>
 
 <p>Or use the installer:</p>
 <pre><code>bash install.sh --docker</code></pre>
@@ -148,11 +152,12 @@ docker build --build-arg GPU_EXTRA=train -t brainbrew-train .</code></pre>
   <li>Optionally enter multiple models comma-separated for ensemble diversity</li>
   <li>Choose quality mode (Fast / Balanced / Research)</li>
   <li>Choose output format (Alpaca / ShareGPT / ChatML / OpenAI)</li>
-  <li>Slide to desired dataset size</li>
+  <li>Slide to desired dataset size (today Brainbrew makes one Q&amp;A pair per ~700-character chunk, so a short document caps the dataset below this number)</li>
   <li>Optional: enable semantic chunking, deduplication, LoRA training, HF publish</li>
   <li>Smash the big <strong>Generate Dataset</strong> button</li>
   <li>Check your quality score, preview examples, and download</li>
 </ol>
+<p>Each run gets its own folder, <code>runs/&lt;run-id&gt;/</code> (or <code>$BRAINBREW_RUNS_DIR</code>): the source text, the generated and cleaned records, the exported dataset, the LoRA adapter (zipped) and a <code>manifest.json</code> with the settings (never your keys), counts and quality report.</p>
 <p>Done. Go train a model that actually knows your niche.</p>
 
 <div align="center">
@@ -165,11 +170,12 @@ docker build --build-arg GPU_EXTRA=train -t brainbrew-train .</code></pre>
 <h2>Advanced Settings (Sidebar)</h2>
 <ul>
   <li><strong>Use vLLM</strong> — Lightning fast (needs 24+ GB VRAM)</li>
-  <li><strong>OpenAI API Key</strong> — fallback for laptop warriors</li>
+  <li><strong>OpenAI API Key</strong> — for OpenAI or any OpenAI-compatible server. To use your own server, set <code>OPENAI_BASE_URL</code> (e.g. <code>http://localhost:11434/v1</code> for Ollama) in <code>.env</code>; any non-empty key works if the server ignores it</li>
   <li><strong>HF Token</strong> — for publishing</li>
   <li><strong>Semantic Chunking</strong> — paragraph-aware splitting (experimental)</li>
   <li><strong>Deduplication</strong> — remove near-duplicate instruction/output pairs</li>
-  <li>Temperature, LoRA rank, batch size — smart-defaulted but tweakable</li>
+  <li><strong>Generation settings</strong> — temperature, max answer length and batch size</li>
+  <li><strong>LoRA settings</strong> — base model (default <code>Qwen/Qwen3-4B-Instruct-2507</code>) and rank, shown when auto-train is on</li>
 </ul>
 
 <hr>
@@ -179,10 +185,10 @@ docker build --build-arg GPU_EXTRA=train -t brainbrew-train .</code></pre>
   <li><strong>Streamlit</strong> – beautiful UI</li>
   <li><strong>distilabel 1.5.x</strong> – the real MVP (Evol-Instruct + generation + filtering)</li>
   <li><strong>vLLM</strong> – GPU wizardry</li>
-  <li><strong>Unsloth</strong> – fastest LoRA training on the planet</li>
+  <li><strong>TRL + PEFT</strong> – LoRA / QLoRA fine-tuning, loss on answers only</li>
   <li><strong>LangChain text splitters</strong> – character &amp; semantic chunking</li>
   <li><strong>Pydantic + Structlog</strong> – no more "it worked on my machine" excuses</li>
-  <li><strong>pytest</strong> – 260 tests with CI via GitHub Actions</li>
+  <li><strong>pytest</strong> – ~300 tests with CI via GitHub Actions</li>
   <li><strong>uv</strong> – locked, hash-verified dependencies</li>
 </ul>
 
@@ -231,6 +237,7 @@ docker build --build-arg GPU_EXTRA=train -t brainbrew-train .</code></pre>
   <li><strong>Nothing happens</strong> — Check console + make sure you uploaded files</li>
   <li><strong>HF publish fails</strong> — Token wrong? Repo name taken? Classic.</li>
   <li><strong>bitsandbytes error</strong> — Needs CUDA. Expected on CPU-only machines.</li>
+  <li><strong>A run failed</strong> — the error is shown in the app and saved as <code>error</code> in <code>runs/&lt;run-id&gt;/manifest.json</code>. Interrupted runs cannot be resumed; start a new one.</li>
 </ul>
 <p>Still stuck? Open an issue. We'll roast the bug together.</p>
 
@@ -238,13 +245,14 @@ docker build --build-arg GPU_EXTRA=train -t brainbrew-train .</code></pre>
 
 <h2>Testing</h2>
 
-<p>Brainbrew ships with 260 automated tests covering config validation, security (API key leakage to logs and to the browser, filename sanitisation), pipeline orchestration, exporter formats, LoRA training, HF publishing, and more. No GPU required to run tests.</p>
+<p>Brainbrew ships with about 300 automated tests. Pipeline tests run the <em>real</em> distilabel pipeline with an offline fake LLM; app tests drive the real Streamlit app (upload → generate → download); LoRA tests run real TRL + PEFT training on tiny models. Also covered: config validation, security (API keys never reach logs, run folders or the browser), all four export formats, sanitizing and HF publishing. No GPU or API key required.</p>
 
 <pre><code>uv run pytest                          # all tests (uses the locked core env + dev tools)
 uv run pytest tests/test_security.py   # just security tests
+# LoRA contract tests need the training packages (CI installs CPU torch for them)
 uv run ruff check . &amp;&amp; uv run mypy app.py config.py orchestrator.py pipeline/ publish/ training/</code></pre>
 
-<p>CI (<code>.github/workflows/ci.yml</code>) runs lint, type checks, tests with a coverage gate, lockfile consistency, pip-audit, gitleaks, and a Docker build + smoke test on every push and PR.</p>
+<p>CI (<code>.github/workflows/ci.yml</code>) runs lint, type checks, tests with an 80% coverage gate, real LoRA training on CPU, lockfile consistency, pip-audit, gitleaks, and a Docker build + smoke test on every push and PR.</p>
 
 <hr>
 

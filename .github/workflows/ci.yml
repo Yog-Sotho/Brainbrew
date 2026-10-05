@@ -59,10 +59,37 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-      # Core install (OpenAI-API mode). GPU stacks are covered by `lockfile`
-      # resolution and the Docker build; the suite mocks GPU libraries.
+      # Core install (OpenAI-API mode). The pipeline tests run the real
+      # distilabel DAG with an offline fake LLM; LoRA training is covered by
+      # `train-contract`.
       - name: Pytest
-        run: uv run --locked pytest --cov --cov-report=term-missing --cov-fail-under=75
+        run: uv run --locked pytest --cov --cov-report=term-missing --cov-fail-under=80
+
+  train-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      # The locked `train` extra pulls CUDA torch (several GB of NVIDIA wheels).
+      # Install the exact locked versions of everything else, and the locked
+      # torch version from PyTorch's CPU index.
+      - name: Install core + CPU training stack (locked versions)
+        run: |
+          set -euo pipefail
+          uv sync --locked
+          uv export --frozen --no-dev --no-emit-project --no-hashes --extra train \
+            | grep -vE '^(torch|triton|nvidia-|cuda-|bitsandbytes)' > "$RUNNER_TEMP/train-cpu.txt"
+          uv pip install --no-deps -r "$RUNNER_TEMP/train-cpu.txt"
+          torch_version=$(sed -n 's/^torch==\([^ ;]*\).*/\1/p' requirements-train.txt)
+          uv pip install --no-deps --index-url https://download.pytorch.org/whl/cpu "torch==${torch_version}"
+      - name: LoRA contract tests (real TRL + PEFT on tiny models)
+        run: uv run --no-sync pytest tests/test_lora_trainer.py
 
   lockfile:
     runs-on: ubuntu-latest
@@ -87,6 +114,7 @@ jobs:
           check requirements.txt
           check requirements-vllm.txt --extra vllm
           check requirements-train.txt --extra train
+          check requirements-gpu.txt --extra vllm --extra train
 
   audit:
     runs-on: ubuntu-latest
@@ -96,8 +124,9 @@ jobs:
           persist-credentials: false
       # One file per step: pip-audit rejects marker-split duplicate pins
       # (e.g. numpy for py<3.13 / >=3.13) when several -r files are combined.
-      # CVE-2026-59890 (setuptools <83): sdist MANIFEST.in handling at build
-      # time only; vllm caps setuptools<81. Not reachable at runtime.
+      # PYSEC-2026-3447 (setuptools <83): sdist MANIFEST.in handling at build
+      # time only; vllm caps setuptools<81 for the whole lock. Not reachable
+      # at runtime.
       - name: pip-audit (core)
         uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
         with:
@@ -106,32 +135,14 @@ jobs:
           no-deps: true
           ignore-vulns: |
             PYSEC-2026-3447
-      - name: pip-audit (vLLM)
+      - name: pip-audit (vLLM + train)
         uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
         with:
-          inputs: requirements-vllm.txt
+          inputs: requirements-gpu.txt
           require-hashes: true
           no-deps: true
           ignore-vulns: |
             PYSEC-2026-3447
-      # The train stack is capped by unsloth (torch<2.13, transformers<=5.5,
-      # datasets<4.4). Accepted until Phase 1 replaces the LoRA trainer:
-      #   PYSEC-2025-194  torch.jit.script local memory corruption (not used)
-      #   PYSEC-2026-3929 transformers tokenizer save_pretrained path traversal
-      #   PYSEC-2026-4174 transformers load_custom_generate (not used)
-      #   PYSEC-2026-3716 datasets folder-builder path traversal (json builder only)
-      - name: pip-audit (train)
-        uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
-        with:
-          inputs: requirements-train.txt
-          require-hashes: true
-          no-deps: true
-          ignore-vulns: |
-            PYSEC-2026-3447
-            PYSEC-2025-194
-            PYSEC-2026-3929
-            PYSEC-2026-4174
-            PYSEC-2026-3716
 
   secrets:
     runs-on: ubuntu-latest

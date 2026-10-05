@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pipeline.records import Record
+
 logger = logging.getLogger(__name__)
 
 
@@ -188,12 +190,21 @@ def redact_pii(text: str, mask: bool = False) -> tuple[str, bool]:
     return text, pii_found
 
 
-_CONTROL_CHAR_RE = re.compile(r'[\x00-\x1F\x7F-\x9F]')
-_WHITESPACE_RE = re.compile(r'\s+')
+# Control characters except tab and newline: answers keep their paragraphs,
+# lists, and code indentation.
+_CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]')
+# Between words: any run containing a tab, or 2+ spaces (lone spaces are left alone).
+_INLINE_SPACE_RE = re.compile(r'(?<=\S)(?:\t[ \t]*| [ \t]+)(?=\S)')
+_TRAILING_SPACE_RE = re.compile(r'[ \t]+\n')
+_BLANK_LINES_RE = re.compile(r'\n{3,}')
 
 
 def clean_text(text: str, remove_html: bool = True) -> str:
-    """Normalize unicode, strip HTML, remove control chars, collapse whitespace."""
+    """Normalize unicode, strip HTML, remove control chars, tidy whitespace.
+
+    Line structure is preserved: newlines and leading indentation survive, while
+    runs of spaces between words, trailing spaces, and 3+ blank lines collapse.
+    """
     if not isinstance(text, str):
         return text
     # ⚡ Optimization: Skip unicode normalization for ASCII strings
@@ -201,9 +212,17 @@ def clean_text(text: str, remove_html: bool = True) -> str:
         text = unicodedata.normalize('NFKC', text)
     if remove_html:
         text = strip_html(text)
+    if '\r' in text:
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
     text = _CONTROL_CHAR_RE.sub(' ', text)
-    text = _WHITESPACE_RE.sub(' ', text).strip()
-    return text
+    # ⚡ Optimization: each whitespace pass runs only when its trigger is present.
+    if '\t' in text or '  ' in text:
+        text = _INLINE_SPACE_RE.sub(' ', text)
+    if '\n' in text:
+        text = _TRAILING_SPACE_RE.sub('\n', text)
+        if '\n\n\n' in text:
+            text = _BLANK_LINES_RE.sub('\n\n', text)
+    return text.strip()
 
 
 def _sanitize_value(
@@ -385,7 +404,60 @@ def sanitize_record(
 
 
 # ============================================================================
-# Dataset-level entry point
+# Canonical-record entry point (used by the orchestrator)
+# ============================================================================
+def sanitize_records(
+    records: list[Record],
+    cfg: SanitizerConfig | None = None,
+) -> tuple[list[Record], SanitizeStats]:
+    """Sanitize canonical records. Only the text fields are cleaned; `meta` is kept.
+
+    Runs on canonical {instruction, input, output} records *before* formatting,
+    so the same rules apply whatever the export format is.
+    """
+    if cfg is None:
+        cfg = SanitizerConfig()
+
+    stats = SanitizeStats()
+    seen_hashes: set[str] = set()
+    kept: list[Record] = []
+
+    for rec in records:
+        stats.total += 1
+        fields = {'instruction': rec.instruction, 'input': rec.input, 'output': rec.output}
+        sanitized, rejection, pii_found = _sanitize_record_internal(fields, cfg)
+
+        if sanitized is None:
+            if rejection and 'missing required field' in rejection:
+                stats.filtered_require += 1
+            else:
+                stats.filtered_quality += 1
+            continue
+
+        try:
+            clean = Record(**sanitized, meta=rec.meta)
+        except ValueError:  # cleaning emptied a required field
+            stats.filtered_require += 1
+            continue
+
+        if cfg.deduplicate:
+            h = get_record_hash(sanitized)
+            if h in seen_hashes:
+                stats.deduplicated += 1
+                continue
+            seen_hashes.add(h)
+
+        if cfg.remove_pii and pii_found:
+            stats.pii_redacted += 1
+
+        kept.append(clean)
+        stats.kept += 1
+
+    return kept, stats
+
+
+# ============================================================================
+# Dataset-level entry point (standalone use on any JSONL file)
 # ============================================================================
 def sanitize_dataset(
     input_path: Path,

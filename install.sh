@@ -73,8 +73,8 @@ Options:
   --no-venv         Skip virtual-environment creation (use system Python)
   --no-gpu-check    Skip CUDA / GPU detection
   --skip-tests      Skip the post-install import smoke tests
-  --train           Install LoRA training deps (Unsloth) instead of vLLM.
-                    The two cannot share one environment.
+  --train           Also install the LoRA training stack (TRL + PEFT), even on
+                    a GPU that would otherwise get the core install.
   --no-colour       Disable ANSI colours
   -h, --help        Show this help message
 
@@ -354,19 +354,18 @@ ok "pip upgraded to $("$PIP_CMD" --version | awk '{print $2}')"
 step "Installing Python dependencies from requirements.txt"
 
 if [[ "$HAS_GPU" == false ]]; then
-  warn "No GPU detected. GPU packages (vLLM, Unsloth, bitsandbytes) will be installed"
-  warn "but may fail at runtime without CUDA. That is expected."
+  log "No GPU detected: installing the core stack (OpenAI-compatible API mode)."
 fi
 
-# Pick the locked requirement set for this machine. All three files are
+# Pick the locked requirement set for this machine. All four files are
 # generated from uv.lock (`uv export`) and carry hashes, so pip verifies every
 # download.
-if [[ "$WITH_TRAIN" == true ]]; then
+if [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
+  REQUIREMENTS="requirements-gpu.txt"
+  log "GPU with >= 24 GB VRAM: installing vLLM + LoRA training stack."
+elif [[ "$RECOMMENDED_MODE" == "openai_with_lora" || "$WITH_TRAIN" == true ]]; then
   REQUIREMENTS="requirements-train.txt"
-  log "--train: installing LoRA training stack (no vLLM)."
-elif [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
-  REQUIREMENTS="requirements-vllm.txt"
-  log "GPU with >= 24 GB VRAM: installing vLLM stack."
+  log "Installing core + LoRA training stack (generation via an OpenAI-compatible API)."
 else
   log "Installing core stack (OpenAI API mode)."
 fi
@@ -379,7 +378,7 @@ log "Installing ${TOTAL_PKGS} pinned packages from ${REQUIREMENTS} (this may tak
 if "$PIP_CMD" install --quiet --require-hashes -r "$REQUIREMENTS" 2>&1 | tee -a "$LOG_FILE"; then
   ok "All dependencies installed successfully."
 else
-  die "Dependency install failed. See ${LOG_FILE}. vLLM and Unsloth require Linux + CUDA; on other systems use the default (core) install."
+  die "Dependency install failed. See ${LOG_FILE}. vLLM and bitsandbytes require Linux + CUDA; on other systems use the default (core) install."
 fi
 
 # ---------------------------------------------------------------------------

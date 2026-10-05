@@ -6,9 +6,11 @@ Provides two strategies:
   2. semantic_chunk()  — paragraph-aware splitting with sentence-boundary merging.
 
 Both return a list of non-empty text chunks suitable for prompt generation.
+read_document() turns an uploaded PDF or text file into plain text.
 """
 from __future__ import annotations
 
+import io
 import re
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -123,3 +125,16 @@ def semantic_chunk(
         merged = overlapped
 
     return [c for c in merged if c.strip()]
+
+
+def read_document(name: str, data: bytes) -> str:
+    """Extract plain text from an uploaded PDF or text file.
+
+    PDFs are detected by extension or magic bytes. Text that is not valid UTF-8
+    is decoded with replacement characters rather than rejected.
+    """
+    if name.lower().endswith(".pdf") or data[:5] == b"%PDF-":
+        from pdfminer.high_level import extract_text
+
+        return str(extract_text(io.BytesIO(data)))
+    return data.decode("utf-8-sig", errors="replace")
