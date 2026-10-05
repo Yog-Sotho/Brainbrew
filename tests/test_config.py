@@ -112,6 +112,7 @@ class TestDistillationConfigValid:
             train_model=True,
             publish_dataset=True,
             hf_repo="user/repo",
+            hf_token="hf_test",
             temperature=1.0,
             max_new_tokens=512,
             batch_size=32,
@@ -132,10 +133,21 @@ class TestDistillationConfigValid:
         cfg = DistillationConfig(teacher_model="gpt-4o,gpt-3.5-turbo")
         assert "gpt-4o" in cfg.teacher_model
 
-    def test_judge_model_field_exists(self):
+    def test_unused_fields_removed(self):
+        # judge_model was never used (returns in Phase 2); checkpoint resume lost data.
         cfg = DistillationConfig(teacher_model="gpt-4o")
-        assert hasattr(cfg, "judge_model")
-        assert cfg.judge_model == "gpt-4o-mini"
+        assert not hasattr(cfg, "judge_model")
+        assert not hasattr(cfg, "checkpoint_dir")
+
+    def test_default_base_model_has_chat_template_family(self):
+        from config import DEFAULT_BASE_MODEL
+        assert DistillationConfig(teacher_model="gpt-4o").base_model == DEFAULT_BASE_MODEL
+
+    def test_public_dict_has_no_secrets(self):
+        cfg = DistillationConfig(teacher_model="gpt-4o", api_key="sk-x", hf_token="hf_x")
+        public = cfg.public_dict()
+        assert "api_key" not in public and "hf_token" not in public
+        assert public["output_format"] == "alpaca"  # JSON-safe values
 
     def test_default_api_key_is_none(self):
         cfg = DistillationConfig(teacher_model="gpt-4o")
@@ -192,7 +204,7 @@ class TestDistillationConfigInvalid:
 
     def test_lora_rank_below_minimum_raises(self):
         with pytest.raises(ValidationError):
-            DistillationConfig(teacher_model="gpt-4o", lora_rank=7)
+            DistillationConfig(teacher_model="gpt-4o", lora_rank=3)
 
     def test_batch_size_zero_raises(self):
         with pytest.raises(ValidationError):
@@ -264,3 +276,41 @@ class TestApiKeyNeverLeaks:
 def test_quality_mode_round_trip(mode_str, expected):
     cfg = DistillationConfig(teacher_model="gpt-4o", quality_mode=mode_str)
     assert cfg.quality_mode == expected
+
+
+class TestCrossFieldRules:
+    """Rules the UI used to duplicate; now only DistillationConfig enforces them."""
+
+    def test_api_key_required_without_vllm(self):
+        with pytest.raises(ValidationError, match="API key is required when not using vLLM"):
+            DistillationConfig(teacher_model="gpt-4o", use_vllm=False)
+
+    def test_blank_api_key_counts_as_missing(self):
+        with pytest.raises(ValidationError, match="API key is required"):
+            DistillationConfig(teacher_model="gpt-4o", use_vllm=False, api_key="   ")
+
+    def test_no_api_key_needed_with_vllm(self):
+        assert DistillationConfig(teacher_model="m", use_vllm=True).api_key is None
+
+    def test_publish_requires_token(self):
+        with pytest.raises(ValidationError, match="Hugging Face token is required"):
+            DistillationConfig(teacher_model="m", publish_dataset=True, hf_repo="user/repo")
+
+    def test_publish_requires_repo(self):
+        with pytest.raises(ValidationError, match="hf_repo is required"):
+            DistillationConfig(teacher_model="m", publish_dataset=True, hf_token="hf_x")
+
+    @pytest.mark.parametrize("field,value", [
+        ("max_new_tokens", 32769), ("batch_size", 1025), ("lora_rank", 257),
+    ])
+    def test_upper_bounds(self, field, value):
+        with pytest.raises(ValidationError):
+            DistillationConfig(teacher_model="m", **{field: value})
+
+
+def test_check_hf_repo_name_shared_rule():
+    from config import check_hf_repo_name
+    assert check_hf_repo_name("  user/repo ") == "user/repo"
+    for bad in ["user", "user/../x", "a/b/c", "user/my repo", ""]:
+        with pytest.raises(ValueError, match="Invalid Hugging Face repository name"):
+            check_hf_repo_name(bad)

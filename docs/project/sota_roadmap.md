@@ -54,7 +54,7 @@ Phase 1 fixes distilabel *in place* (option A) so the product works quickly. Pha
 | Network exposure | Server binds 127.0.0.1 (verified: loopback ok, non-loopback refused). Optional OIDC gate (`BRAINBREW_REQUIRE_LOGIN=1`) fails closed without `[auth]` config. |
 | CI | `.github/workflows/ci.yml` passes actionlint, with SHA-pinned actions. Locally: ruff ✓, mypy ✓ (pydantic plugin), 260 tests ✓ (cov 76 %, gate 75 %), lock/exports in sync ✓, pip-audit ✓, gitleaks ✓ (history + tree). |
 
-**Accepted risk, carried into Phase 1:** the `train` extra is capped by Unsloth (torch < 2.13, transformers ≤ 5.5, datasets < 4.4, trl ≤ 0.24). Four advisories therefore remain in that stack only, and CI ignores them for that stack: PYSEC-2025-194, PYSEC-2026-3929, PYSEC-2026-4174 and PYSEC-2026-3716. setuptools CVE-2026-59890 (build-time sdist handling) is capped by vllm (< 81) and ignored everywhere. **Add to Phase 1.3:** move LoRA training to plain TRL + PEFT (no Unsloth pin), which lifts these caps.
+**Accepted risk, carried into Phase 1 (resolved in Phase 1, see below):** the `train` extra is capped by Unsloth (torch < 2.13, transformers ≤ 5.5, datasets < 4.4, trl ≤ 0.24). Four advisories therefore remain in that stack only, and CI ignores them for that stack: PYSEC-2025-194, PYSEC-2026-3929, PYSEC-2026-4174 and PYSEC-2026-3716. setuptools CVE-2026-59890 (build-time sdist handling) is capped by vllm (< 81) and ignored everywhere. **Add to Phase 1.3:** move LoRA training to plain TRL + PEFT (no Unsloth pin), which lifts these caps.
 
 ## Phase 1: Make it correct (about 3–4 days)
 
@@ -71,6 +71,36 @@ Phase 1 fixes distilabel *in place* (option A) so the product works quickly. Pha
 | 1.9 | README: remove false claims (refusal cleaning, resume, CI), fix the test count and document the extras-based install. |
 
 **Gate:** an end-to-end run against a real OpenAI-compatible endpoint (e.g. `vllm serve` with a small model, or OpenAI `gpt-4o-mini`) on a 5-page PDF produces aligned pairs in all 4 formats. The sanitizer keeps more than 0 rows in every format, the scorer gives the same grade across formats, and coverage including `app.py` is ≥ 80 %.
+
+### Phase 1 status (2026-10-05): done
+
+| # | Result |
+|---|---|
+| 1.1 | `pipeline/records.py`: `Record(instruction, input, output, meta)`. Dedup, sanitize, scoring and training work on canonical records; `pipeline/exporter.py` only formats. Sanitize now keeps records in all 4 formats (the audit reproduced 0/30 for ShareGPT/ChatML/OpenAI), and an empty sanitize result is an error instead of a silent fallback to unsanitized data. |
+| 1.2 | `distilabel.models`, `generation_kwargs`, `StepInput` step (in `pipeline/steps.py`, which must not use postponed annotations or distilabel cannot see the hint), evolved instruction kept with the seed in `meta`, per-run pipeline name and cache dir. |
+| 1.3 | Unsloth replaced by TRL 1.14 + PEFT 0.21: conversational prompt-completion data with the model's chat template (Alpaca text for base models), loss on answers only, `target_modules="all-linear"`, auto bf16/fp16, 4-bit QLoRA on CUDA. Default base model `Qwen/Qwen3-4B-Instruct-2507`. With Unsloth gone, `vllm` and `train` resolve together (one torch 2.13), and the four training-stack advisories accepted in Phase 0 are fixed. |
+| 1.4 | `runs/<run-id>/` with `source.txt`, `raw.jsonl`, `records.jsonl`, `dataset.<fmt>.jsonl`, `manifest.json` (config without secrets, status, counts, sanitizer stats, quality, error), `adapter/` + `adapter.zip`. Results render from `st.session_state["run_id"]` on every rerun; downloads use `on_click="ignore"`. |
+| 1.5 | **Resume removed.** distilabel 1.5.3's `use_cache=True` lost rows in every interrupted-run test (12/20 kept after SIGTERM, 16/20 after SIGKILL) and hangs forever if a worker process dies. Checkpoint code, `checkpoint_dir` and the README claim are gone. |
+| 1.6 | The UI builds `DistillationConfig` and renders its `ValidationError`s; cross-field rules (API key without vLLM, HF token + repo when publishing) live in the config. The HF repo rule is shared with the publisher. The filename allow-list is gone (names were never used as paths). |
+| 1.7 | Sidebar "Generation settings" (temperature, max answer length, batch size); base model and LoRA rank appear when auto-train is on. `judge_model` removed until Phase 2. |
+| 1.8 | Tests run the real libraries: the distilabel DAG with an offline `FakeLLM`, a 4-format matrix, `AppTest` flows through the real `app.py` (upload → generate → results survive reruns), and real TRL + PEFT training on tiny Hub models (new `train-contract` CI job, CPU torch). The test that copied `app.py`'s validation logic was deleted. Coverage 91 % (gate: 80 %). |
+| 1.9 | README: no resume / refusal-cleaning claims, TRL + PEFT, run folders, `OPENAI_BASE_URL`, the one-pair-per-chunk cap. |
+
+**End-to-end gate:** in progress at the time of this commit (real UI in headless Chromium → Streamlit → OpenAI-compatible server running `Qwen/Qwen2.5-0.5B-Instruct` on CPU, 5-page PDF); results follow in the next commit.
+
+**Found during Phase 1 (not in the audit):**
+
+- **Generation could never run from the UI.** `Pipeline.run` installs a SIGINT handler, which Python allows only on the main thread, and Streamlit runs scripts on worker threads. Generation now runs in a spawned child process (`pipeline/generation.py`), which also keeps distilabel's process-global side effects (it replaces the root logger's handlers and leaves a closed `QueueHandler` behind) out of the server.
+- The sanitizer turned every newline into a space, flattening lists, paragraphs and code in answers. Line structure is now preserved.
+- `re.match(r"^...$")` accepted a trailing newline in run ids and HF repo names; `fullmatch` everywhere.
+- transformers 5 removed `warmup_ratio` (`warmup_steps` takes a ratio).
+
+**Carried forward:**
+
+- **2.1:** with a slow OpenAI-compatible server (e.g. a CPU-only local model), distilabel's 120 s timeout plus the default batch size of 64 makes most requests time out. A batch size of 1–4 works today; the new engine should expose timeout and concurrency.
+- **2.1:** a dead distilabel worker hangs the pipeline forever; ~50k Pydantic deprecation warnings per run come from distilabel (silenced in tests only).
+- **2.8:** one pair per chunk, so "Target dataset size" is an upper bound.
+- **3.1:** interrupted runs cannot be resumed; the job runner should add a per-batch ledger in the run directory. A run keeps going if the browser is closed (the script thread waits for the child).
 
 ## Phase 2: State-of-the-art generation quality (about 1–2 weeks)
 

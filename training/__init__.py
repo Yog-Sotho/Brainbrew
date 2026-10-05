@@ -1,1 +1,1 @@
-"""Brainbrew training — optional LoRA fine-tuning via Unsloth + TRL."""
+"""Brainbrew training — optional LoRA fine-tuning with TRL + PEFT."""

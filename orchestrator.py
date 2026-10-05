@@ -1,6 +1,10 @@
 """
-Brainbrew orchestrator — coordinates document loading, distilabel pipeline,
-optional LoRA training, and optional HF publishing.
+Brainbrew orchestrator — coordinates document chunking, the distilabel pipeline,
+dedup/sanitizing, export, optional LoRA training and optional HF publishing.
+
+Every stage works on canonical records (pipeline/records.py) inside a
+persistent run directory (pipeline/runs.py); formatting happens only at export.
+Generation itself runs in a child process (pipeline/generation.py).
 
 Heavy GPU imports (via lora_trainer) and optional HF imports (via hf_publisher)
 are deferred to inside their respective conditional blocks so this module is
@@ -8,322 +12,156 @@ safely importable on CPU-only hosts.
 """
 from __future__ import annotations
 
-import contextlib
-import hashlib
-import json
 import shutil
-import tempfile
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import structlog
-from distilabel.llms import OpenAILLM, vLLM
-from distilabel.pipeline import Pipeline
-from distilabel.steps import KeepColumns, LoadDataFromDicts
-from distilabel.steps.base import Step
-from distilabel.steps.tasks import EvolInstruct, TextGeneration
+from distilabel.models import OpenAILLM, vLLM
+from pydantic import ValidationError
 
 from config import DistillationConfig, QualityMode
 from pipeline.document_loader import character_chunk, semantic_chunk
-from pipeline.exporter import export_dataset
+from pipeline.exporter import deduplicate_records, export_dataset
+from pipeline.generation import generate_rows
+from pipeline.quality import QualityReport, score_records
+from pipeline.records import Record, write_records
+from pipeline.runs import RunDir, create_run, utc_now
 
 logger = structlog.get_logger(__name__)
 
 MAX_SOURCE_BYTES: int = 100 * 1024 * 1024  # 100 MB
-MAX_EXPORT_RECORDS: int = 500_000
 
-# Map output formats to the fields the sanitizer should require as non-empty.
-_SANITIZER_REQUIRE_FIELDS: dict[str, list[str]] = {
-    "alpaca":   ["instruction", "output"],
-    "sharegpt":  ["conversations"],
-    "chatml":    ["messages"],
-    "openai":    ["messages"],
+_NUM_EVOLUTIONS: dict[QualityMode, int] = {
+    QualityMode.FAST: 1,
+    QualityMode.BALANCED: 2,
+    QualityMode.RESEARCH: 3,
 }
 
 
 # ---------------------------------------------------------------------------
-# Custom distilabel Step: rename 'generation' -> 'output' and filter short rows.
-# distilabel 1.5.x has no built-in FilterRows or RenameColumns.
-# ---------------------------------------------------------------------------
-class FilterAndRenameOutputs(Step):
-    """Rename the 'generation' column to 'output' and drop rows below min_length chars."""
-
-    min_length: int = 100
-
-    @property
-    def inputs(self) -> list[str]:
-        return ["generation"]
-
-    @property
-    def outputs(self) -> list[str]:
-        return ["output"]
-
-    def process(self, inputs: list[dict[str, Any]]) -> Any:  # type: ignore[override]
-        # FIX M-11: yield individual batches correctly per distilabel Step protocol
-        kept = []
-        for row in inputs:
-            gen = row.get("generation", "")
-            if isinstance(gen, str) and len(gen) > self.min_length:
-                kept.append({**row, "output": gen})
-        yield kept
-
-
-# ---------------------------------------------------------------------------
-# Enhancement 10: Quality scoring
-# ---------------------------------------------------------------------------
-_QUALITY_THRESHOLDS = {
-    "SUPER":    {"min_records": 100, "min_avg_len": 300, "min_unique_ratio": 0.95},
-    "GOOD":     {"min_records": 50,  "min_avg_len": 200, "min_unique_ratio": 0.85},
-    "NORMAL":   {"min_records": 20,  "min_avg_len": 100, "min_unique_ratio": 0.70},
-    "BAD":      {"min_records": 5,   "min_avg_len": 50,  "min_unique_ratio": 0.50},
-}
-
-
-def score_dataset(dataset_path: Path) -> dict[str, Any]:
-    """Score the generated dataset and return a quality report.
-
-    Returns dict with keys: grade, record_count, avg_output_length,
-    unique_ratio, details.
-    """
-    records: list[dict] = []
-    try:
-        with open(dataset_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        records.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-    except OSError:
-        return {
-            "grade": "DISASTER",
-            "record_count": 0,
-            "avg_output_length": 0,
-            "unique_ratio": 0.0,
-            "details": "Could not read dataset file.",
-        }
-
-    if not records:
-        return {
-            "grade": "DISASTER",
-            "record_count": 0,
-            "avg_output_length": 0,
-            "unique_ratio": 0.0,
-            "details": "Dataset is empty — no valid records produced.",
-        }
-
-    # Compute metrics
-    record_count = len(records)
-    output_lengths = [len(r.get("output", "")) for r in records]
-    avg_output_len = sum(output_lengths) / len(output_lengths) if output_lengths else 0
-
-    # Unique instruction ratio
-    instructions = [r.get("instruction", "") for r in records]
-    unique_instructions = len(set(instructions))
-    unique_ratio = unique_instructions / len(instructions) if instructions else 0.0
-
-    # Determine grade
-    grade = "BAD"
-    for level in ["SUPER", "GOOD", "NORMAL", "BAD"]:
-        thresholds = _QUALITY_THRESHOLDS[level]
-        if (record_count >= thresholds["min_records"]
-                and avg_output_len >= thresholds["min_avg_len"]
-                and unique_ratio >= thresholds["min_unique_ratio"]):
-            grade = level
-            break
-
-    # Build human-readable details
-    detail_parts = [
-        f"{record_count} records generated",
-        f"Average output length: {avg_output_len:.0f} chars",
-        f"Instruction uniqueness: {unique_ratio:.0%}",
-    ]
-    if avg_output_len < 100:
-        detail_parts.append("⚠ Outputs are very short — consider using Research mode.")
-    if unique_ratio < 0.70:
-        detail_parts.append("⚠ Many duplicate instructions — increase dataset_size or source material.")
-
-    return {
-        "grade": grade,
-        "record_count": record_count,
-        "avg_output_length": avg_output_len,
-        "unique_ratio": unique_ratio,
-        "details": " · ".join(detail_parts),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Enhancement 7: Checkpoint support
-# ---------------------------------------------------------------------------
-def _load_checkpoint(checkpoint_dir: str | None) -> dict[str, Any]:
-    """Load checkpoint state if it exists."""
-    if not checkpoint_dir:
-        return {}
-    cp_path = Path(checkpoint_dir) / "brainbrew_checkpoint.json"
-    if cp_path.exists():
-        try:
-            state = json.loads(cp_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
-        return state if isinstance(state, dict) else {}
-    return {}
-
-
-def _save_checkpoint(checkpoint_dir: str | None, state: dict[str, Any]) -> None:
-    """Save checkpoint state."""
-    if not checkpoint_dir:
-        return
-    cp_dir = Path(checkpoint_dir)
-    cp_dir.mkdir(parents=True, exist_ok=True)
-    cp_path = cp_dir / "brainbrew_checkpoint.json"
-    cp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Enhancement 4: Multi-model support
+# LLM + pipeline
 # ---------------------------------------------------------------------------
 def _create_llm(model_name: str, cfg: DistillationConfig) -> Any:
-    """Create an LLM instance for a single model."""
+    """Create a distilabel LLM. Sampling settings go in generation_kwargs."""
+    generation_kwargs = {
+        "max_new_tokens": cfg.max_new_tokens,
+        "temperature": cfg.temperature,
+    }
     if cfg.use_vllm:
-        return vLLM(
-            model=model_name,
-            max_new_tokens=cfg.max_new_tokens,
-            temperature=cfg.temperature,
-        )
-    else:
-        return OpenAILLM(
-            model=model_name,
-            api_key=cfg.api_key,
-            max_new_tokens=cfg.max_new_tokens,
-            temperature=cfg.temperature,
-        )
-
-
-def _run_single_pipeline(
-    prompts: list[str],
-    llm: Any,
-    num_evolutions: int,
-    batch_size: int,
-    raw_path: Path,
-) -> None:
-    """Run a single distilabel pipeline for one model and write results."""
-    with Pipeline(name="brainbrew") as pipeline:
-        loader = LoadDataFromDicts(
-            data=[{"instruction": p} for p in prompts],
-            batch_size=batch_size,
-        )
-        evol = EvolInstruct(llm=llm, num_evolutions=num_evolutions)
-        gen = TextGeneration(
-            llm=llm,
-            input_mappings={"instruction": "evolved_instruction"},
-        )
-        filter_rename = FilterAndRenameOutputs(min_length=100)
-        keep = KeepColumns(columns=["instruction", "output"])
-
-        loader >> evol >> gen >> filter_rename >> keep
-
-    distiset = pipeline.run(use_cache=False)
-    distiset["default"]["train"].to_json(str(raw_path))
-
-
-# ---------------------------------------------------------------------------
-# Post-export dataset sanitization (native — no subprocess)
-# ---------------------------------------------------------------------------
-def _run_sanitizer(
-    dataset_path: Path,
-    output_format: str,
-) -> Path:
-    """Run the native sanitizer on the exported dataset.
-
-    Applies PII redaction, HTML cleaning, deduplication, and quality gates.
-    On success the sanitized file replaces the original. On failure the
-    original is left untouched and a warning is logged.
-
-    Args:
-        dataset_path: Path to the exported JSONL dataset.
-        output_format: One of 'alpaca', 'sharegpt', 'chatml', 'openai'.
-
-    Returns:
-        Path to the (possibly sanitized) dataset — same as dataset_path.
-    """
-    from pipeline.sanitizer import SanitizerConfig, sanitize_dataset
-
-    sanitized_path = dataset_path.with_suffix(".sanitized.jsonl")
-
-    require_fields = _SANITIZER_REQUIRE_FIELDS.get(output_format, ["instruction", "output"])
-
-    san_cfg = SanitizerConfig(
-        remove_pii=True,
-        pii_mask=False,
-        clean_html=True,
-        deduplicate=True,
-        require_fields=require_fields,
+        return vLLM(model=model_name, generation_kwargs=generation_kwargs)
+    # base_url defaults to $OPENAI_BASE_URL, so any OpenAI-compatible server works.
+    return OpenAILLM(
+        model=model_name,
+        api_key=cfg.api_key,
+        generation_kwargs=generation_kwargs,
     )
 
-    try:
-        stats = sanitize_dataset(dataset_path, sanitized_path, san_cfg)
 
-        # Verify sanitized output is non-empty
-        if not sanitized_path.exists() or sanitized_path.stat().st_size == 0:
-            logger.warning(
-                "Sanitizer produced empty output — keeping original dataset",
-            )
-            if sanitized_path.exists():
-                sanitized_path.unlink()
-            return dataset_path
+def _rows_to_records(rows: list[dict[str, Any]]) -> list[Record]:
+    records: list[Record] = []
+    for row in rows:
+        try:
+            records.append(Record(
+                instruction=row["instruction"],
+                output=row["output"],
+                meta={"seed": row.get("seed"), "model": row.get("model_name")},
+            ))
+        except (KeyError, ValidationError):
+            continue
+    return records
 
-        # Replace original with sanitized version
-        shutil.move(str(sanitized_path), str(dataset_path))
 
-        logger.info(
-            "Dataset sanitized",
-            original_records=stats.total,
-            kept_records=stats.kept,
-            filtered_quality=stats.filtered_quality,
-            filtered_require=stats.filtered_require,
-            deduplicated=stats.deduplicated,
-            pii_redacted=stats.pii_redacted,
+def _split_prompts(prompts: list[str], n_models: int) -> list[list[str]]:
+    """Split prompts across models; the last model takes the remainder."""
+    size = max(1, len(prompts) // n_models)
+    parts = []
+    for i in range(n_models):
+        start = i * size
+        end = start + size if i < n_models - 1 else len(prompts)
+        parts.append(prompts[start:end])
+    return parts
+
+
+# ---------------------------------------------------------------------------
+# Sanitizing
+# ---------------------------------------------------------------------------
+def _sanitize(records: list[Record], run: RunDir) -> list[Record]:
+    """PII redaction, HTML cleaning, dedup and quality gates on canonical records.
+
+    Raises instead of falling back to the unsanitized data: a user who asked
+    for PII removal must never silently get the raw records.
+    """
+    from pipeline.sanitizer import SanitizerConfig, sanitize_records
+
+    kept, stats = sanitize_records(
+        records,
+        SanitizerConfig(remove_pii=True, pii_mask=False, clean_html=True, deduplicate=True),
+    )
+    run.update_manifest(sanitizer=asdict(stats))
+    logger.info("Dataset sanitized", **asdict(stats))
+    if not kept:
+        raise RuntimeError(
+            f"Sanitizing removed all {stats.total} records "
+            f"({stats.filtered_quality} failed quality checks, "
+            f"{stats.filtered_require} were missing fields). "
+            "Turn off 'Clean & sanitize' or use a longer source document."
         )
-
-        return dataset_path
-
-    except Exception as exc:
-        logger.warning(
-            "Sanitizer failed — keeping original dataset",
-            error=str(exc),
-        )
-        if sanitized_path.exists():
-            with contextlib.suppress(OSError):
-                sanitized_path.unlink()
-        return dataset_path
+    return kept
 
 
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class RunResult:
+    run: RunDir
+    dataset_path: Path
+    record_count: int
+    quality: QualityReport
+    adapter_zip: Path | None = None
+    published_repo: str | None = None
+
+
 def run_distillation(
     cfg: DistillationConfig,
     source_file: Path,
     progress_callback: Callable[[int], None] | None = None,
-    output_dir: Path | None = None,
-) -> Path:
-    """Run the full Brainbrew distillation pipeline.
+    run: RunDir | None = None,
+) -> RunResult:
+    """Run the full Brainbrew pipeline inside a persistent run directory.
 
     Args:
         cfg: Validated pipeline configuration.
-        source_file: Path to concatenated source text.
+        source_file: Path to concatenated source text (copied into the run dir).
         progress_callback: Optional callback receiving progress 0-100.
-        output_dir: Directory for output files (default: temp dir adjacent to source).
+        run: Run directory to use (a new one is created when omitted).
 
     Returns:
-        Path to the final exported dataset JSONL.
+        RunResult pointing at the exported dataset and run directory.
     """
-    # Redact api_key before logging
-    safe_cfg = cfg.safe_dict()
-    logger.info("Starting distillation", config=safe_cfg)
+    run = run or create_run()
+    logger.info("Starting distillation", run_id=run.run_id, config=cfg.safe_dict())
+    run.update_manifest(status="running", started_at=utc_now(), config=cfg.public_dict())
 
+    try:
+        result = _run(cfg, source_file, run, progress_callback)
+    except BaseException as exc:
+        run.update_manifest(status="failed", finished_at=utc_now(), error=str(exc)[:1000])
+        raise
+    run.update_manifest(status="succeeded", finished_at=utc_now())
+    logger.info("Finished", run_id=run.run_id, path=str(result.dataset_path))
+    return result
+
+
+def _run(
+    cfg: DistillationConfig,
+    source_file: Path,
+    run: RunDir,
+    progress_callback: Callable[[int], None] | None,
+) -> RunResult:
     def _progress(pct: int) -> None:
         if progress_callback:
             progress_callback(min(pct, 100))
@@ -335,14 +173,13 @@ def run_distillation(
             f"Source file is {source_bytes / 1e6:.0f} MB — exceeds the 100 MB limit. "
             "Split the document into smaller files and run multiple times."
         )
-
-    text = source_file.read_text(encoding="utf-8")
+    if source_file.resolve() != run.source.resolve():
+        shutil.copyfile(source_file, run.source)
+    text = run.source.read_text(encoding="utf-8")
     _progress(5)
 
     # -- Stage 2: chunk text ------------------------------------------------
-    # Enhancement 9: use semantic chunking when enabled
     chunks = semantic_chunk(text) if cfg.use_semantic_chunking else character_chunk(text)
-
     prompts = [
         f"Explain the following concept from the document clearly and completely:\n\n{c}"
         for c in chunks
@@ -350,138 +187,83 @@ def run_distillation(
     logger.info("Document chunked", chunks=len(prompts))
     _progress(15)
 
-    # -- Enhancement 7: check for checkpoint --------------------------------
-    checkpoint = _load_checkpoint(cfg.checkpoint_dir)
-    completed_prompts = set(checkpoint.get("completed_hashes", []))
-    if completed_prompts:
-        original_count = len(prompts)
-        prompts = [
-            p for p in prompts
-            if hashlib.sha256(p.encode()).hexdigest() not in completed_prompts
-        ]
-        logger.info(
-            "Checkpoint resumed",
-            skipped=original_count - len(prompts),
-            remaining=len(prompts),
+    # -- Stage 3: initialise LLM backend(s) ----------------------------------
+    model_names = [m.strip() for m in cfg.teacher_model.split(",") if m.strip()]
+    num_evolutions = _NUM_EVOLUTIONS[cfg.quality_mode]
+    _progress(20)
+
+    # -- Stage 4: run pipeline(s); multi-model ensemble splits the prompts ---
+    records: list[Record] = []
+    for i, (model_name, model_prompts) in enumerate(
+        zip(model_names, _split_prompts(prompts, len(model_names)), strict=True)
+    ):
+        if not model_prompts:
+            continue
+        name = f"brainbrew-{run.run_id}" + (f"-m{i}" if len(model_names) > 1 else "")
+        logger.info("Running distilabel pipeline", model=model_name, prompts=len(model_prompts))
+        rows = generate_rows(
+            model_prompts, _create_llm(model_name, cfg), num_evolutions,
+            cfg.batch_size, name, run.distilabel_cache,
         )
-        if not prompts:
-            logger.info("All prompts already processed. Skipping pipeline.")
-            final_path = Path(checkpoint.get("final_path", "alpaca_dataset.jsonl"))
-            _progress(100)
-            return final_path
+        records.extend(_rows_to_records(rows))
 
-    # FIX M-02: use configurable output directory instead of cwd
-    if output_dir is None:
-        output_dir = source_file.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Determine output filename based on format
-    format_extensions = {
-        "alpaca": "alpaca_dataset.jsonl",
-        "sharegpt": "sharegpt_dataset.jsonl",
-        "chatml": "chatml_dataset.jsonl",
-        "openai": "openai_dataset.jsonl",
-    }
-    output_filename = format_extensions.get(cfg.output_format.value, "dataset.jsonl")
-    final_path = output_dir / output_filename
-
-    with tempfile.TemporaryDirectory() as tmp:
-        # -- Stage 3: initialise LLM backend(s) ------------------------------
-        model_names = [m.strip() for m in cfg.teacher_model.split(",") if m.strip()]
-        num_evolutions = (
-            3 if cfg.quality_mode == QualityMode.RESEARCH
-            else 2 if cfg.quality_mode == QualityMode.BALANCED
-            else 1
+    write_records(run.raw, records)
+    counts: dict[str, int] = {"chunks": len(prompts), "generated": len(records)}
+    run.update_manifest(counts=counts)
+    if not records:
+        raise RuntimeError(
+            "The teacher model produced no usable records. Check the model name, "
+            "API key / endpoint and the logs, then try again."
         )
-        _progress(20)
+    _progress(70)
 
-        # -- Stage 4: run pipeline(s) ----------------------------------------
-        raw_parts: list[Path] = []
+    # -- Stage 5: dedup + optional sanitizing on canonical records -----------
+    if cfg.enable_dedup:
+        records = deduplicate_records(records)
+        counts["after_dedup"] = len(records)
+    _progress(80)
 
-        if len(model_names) == 1:
-            # Single model — standard path
-            llm = _create_llm(model_names[0], cfg)
-            raw_path = Path(tmp) / "raw.jsonl"
-            logger.info("Running distilabel pipeline", model=model_names[0], prompts=len(prompts))
-            _run_single_pipeline(prompts, llm, num_evolutions, cfg.batch_size, raw_path)
-            raw_parts.append(raw_path)
-        else:
-            # Enhancement 4: multi-model ensemble — split prompts across models
-            logger.info(
-                "Multi-model ensemble",
-                models=model_names,
-                prompts_per_model=len(prompts) // len(model_names),
-            )
-            chunk_size = max(1, len(prompts) // len(model_names))
-            for i, model_name in enumerate(model_names):
-                start = i * chunk_size
-                end = start + chunk_size if i < len(model_names) - 1 else len(prompts)
-                model_prompts = prompts[start:end]
-                if not model_prompts:
-                    continue
-                llm = _create_llm(model_name, cfg)
-                raw_path = Path(tmp) / f"raw_{i}.jsonl"
-                logger.info(
-                    "Running pipeline for model",
-                    model=model_name,
-                    prompts=len(model_prompts),
-                )
-                _run_single_pipeline(
-                    model_prompts, llm, num_evolutions, cfg.batch_size, raw_path
-                )
-                raw_parts.append(raw_path)
+    if cfg.sanitize_dataset:
+        records = _sanitize(records, run)
+        counts["after_sanitize"] = len(records)
+    write_records(run.records, records)
+    _progress(85)
 
-        _progress(70)
+    # -- Stage 6: score + export in the chosen format ------------------------
+    quality = score_records(records)
+    dataset_path = run.dataset(cfg.output_format.value)
+    counts["exported"] = export_dataset(records, dataset_path, cfg.output_format.value)
+    run.update_manifest(counts=counts, quality=dict(quality), dataset_file=dataset_path.name)
+    logger.info("Dataset exported", path=str(dataset_path), records=counts["exported"])
 
-        # -- Stage 5: merge multi-model outputs if needed ---------------------
-        merged_raw = Path(tmp) / "merged_raw.jsonl"
-        with open(merged_raw, "w", encoding="utf-8") as fout:
-            for part in raw_parts:
-                if part.exists():
-                    with open(part, encoding="utf-8") as fin:
-                        for line in fin:
-                            fout.write(line)
+    # -- Stage 7: optional LoRA training on canonical records ----------------
+    adapter_zip: Path | None = None
+    if cfg.train_model:
+        from training.lora_trainer import train_lora
 
-        # -- Stage 6: export in chosen format --------------------------------
-        record_count = export_dataset(
-            str(merged_raw),
-            str(final_path),
-            output_format=cfg.output_format.value,
-            enable_dedup=cfg.enable_dedup,
-            max_records=MAX_EXPORT_RECORDS,
-        )
-        logger.info("Dataset exported", path=str(final_path), records=record_count)
-        _progress(80)
+        train_lora(run.records, cfg.base_model, run.adapter_dir, cfg.lora_rank)
+        adapter_zip = Path(shutil.make_archive(
+            str(run.adapter_zip.with_suffix("")), "zip", root_dir=run.adapter_dir,
+        ))
+        run.update_manifest(adapter_file=adapter_zip.name)
+        _progress(92)
 
-        # -- Stage 6.5: optional post-export sanitization --------------------
-        if cfg.sanitize_dataset:
-            final_path = _run_sanitizer(
-                final_path,
-                output_format=cfg.output_format.value,
-            )
-        _progress(85)
+    # -- Stage 8: optional HF publish ----------------------------------------
+    published_repo: str | None = None
+    if cfg.publish_dataset and cfg.hf_repo:
+        from publish.hf_publisher import publish_dataset
 
-        # -- Enhancement 7: save checkpoint -----------------------------------
-        all_hashes = list(completed_prompts)
-        for p in prompts:
-            all_hashes.append(hashlib.sha256(p.encode()).hexdigest())
-        _save_checkpoint(cfg.checkpoint_dir, {
-            "completed_hashes": all_hashes,
-            "final_path": str(final_path),
-        })
+        publish_dataset(str(dataset_path), cfg.hf_repo, cfg.hf_token)
+        published_repo = cfg.hf_repo
+        run.update_manifest(published_repo=published_repo)
+        _progress(96)
 
-        # -- Stage 7: optional LoRA training ---------------------------------
-        if cfg.train_model:
-            from training.lora_trainer import train_lora
-            train_lora(str(final_path), cfg.base_model, "trained_adapter", cfg.lora_rank)
-            _progress(92)
-
-        # -- Stage 8: optional HF publish ------------------------------------
-        if cfg.publish_dataset and cfg.hf_repo:
-            from publish.hf_publisher import publish_dataset
-            publish_dataset(str(final_path), cfg.hf_repo, cfg.hf_token)
-            _progress(96)
-
-        _progress(100)
-        logger.info("Finished", path=str(final_path))
-        return final_path
+    _progress(100)
+    return RunResult(
+        run=run,
+        dataset_path=dataset_path,
+        record_count=counts["exported"],
+        quality=quality,
+        adapter_zip=adapter_zip,
+        published_repo=published_repo,
+    )

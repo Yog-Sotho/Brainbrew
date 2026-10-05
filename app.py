@@ -8,26 +8,30 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import tempfile
-from pathlib import Path
+from typing import Any
 
 import streamlit as st
 import structlog
 from dotenv import load_dotenv
+from pydantic import ValidationError
 
 from config import (
+    DEFAULT_BASE_MODEL,
     OUTPUT_FORMAT_LABELS,
     QUALITY_MODE_LABELS,
     DistillationConfig,
-    OutputFormat,
-    QualityMode,
 )
-from orchestrator import run_distillation, score_dataset
+from orchestrator import run_distillation
+from pipeline.document_loader import read_document
+from pipeline.records import Record
+from pipeline.runs import RunDir, create_run, open_run
 
 load_dotenv()
 structlog.configure(wrapper_class=structlog.make_filtering_bound_logger("INFO"))
 logger = structlog.get_logger(__name__)
+
+MAX_WARN_BYTES: int = 10 * 1024 * 1024   # warn at 10 MB
+MAX_HARD_BYTES: int = 50 * 1024 * 1024   # hard limit at 50 MB per file
 
 # ── Page config ──────────────────────────────────────────────────────────────
 
@@ -58,10 +62,10 @@ if os.getenv("BRAINBREW_REQUIRE_LOGIN", "").strip().lower() in {"1", "true", "ye
         st.stop()
     st.sidebar.button("Log out", on_click=st.logout)
 
-st.title("🧠 Brainbrew v1.2.0")
+st.title("🧠 Brainbrew v1.3.0")
 st.caption("Production-grade synthetic dataset generator — GPU edition")
 
-# ── Sidebar: advanced settings ───────────────────────────────────────────────
+# ── Sidebar: settings ────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.header("⚙️ Advanced Settings")
@@ -108,10 +112,23 @@ with st.sidebar:
         "Clean & sanitize dataset",
         value=False,
         help=(
-            "Run the Dataset Sanitizer after generation to remove PII, "
-            "deduplicate, strip HTML artifacts, and enforce quality gates."
+            "Remove PII (emails, phone numbers, URLs, IPs, card numbers), strip HTML "
+            "artifacts, deduplicate, and drop low-quality pairs before export."
         ),
     )
+
+    with st.expander("🔧 Generation settings"):
+        temperature: float = st.slider(
+            "Temperature", 0.0, 2.0, 0.7, 0.1,
+            help="Higher values give more varied answers; lower values more predictable ones.",
+        )
+        max_new_tokens: int = st.number_input(
+            "Max answer length (tokens)", min_value=128, max_value=32768, value=2048, step=128,
+        )
+        batch_size: int = st.number_input(
+            "Batch size", min_value=1, max_value=1024, value=64,
+            help="Prompts sent to the model per batch.",
+        )
 
 # ── Main panel ───────────────────────────────────────────────────────────────
 
@@ -125,32 +142,37 @@ st.caption(
     "`meta-llama/Meta-Llama-3.1-8B-Instruct` (vLLM local) · `Qwen/Qwen2.5-72B-Instruct` (vLLM large)"
 )
 
-# Quality mode selector
 quality_label: str = st.selectbox(
     "Quality Mode",
     options=list(QUALITY_MODE_LABELS.values()),
     index=1,
 )
-quality_mode: str = next(
-    k.value for k, v in QUALITY_MODE_LABELS.items() if v == quality_label
-)
+quality_mode = next(k for k, v in QUALITY_MODE_LABELS.items() if v == quality_label)
 
-# Enhancement 6: output format selector
 format_label: str = st.selectbox(
     "Output Format",
     options=list(OUTPUT_FORMAT_LABELS.values()),
     index=0,
     help="Choose the dataset format your training framework expects.",
 )
-output_format: str = next(
-    k.value for k, v in OUTPUT_FORMAT_LABELS.items() if v == format_label
-)
+output_format = next(k for k, v in OUTPUT_FORMAT_LABELS.items() if v == format_label)
 
 dataset_size: int = st.slider("Target Dataset Size", 500, 20000, 2000)
-train_model: bool = st.checkbox("Auto-train LoRA adapter", value=False)
-publish: bool = st.checkbox("Publish to Hugging Face", value=False)
 
-# Editable HF repo name
+train_model: bool = st.checkbox("Auto-train LoRA adapter", value=False)
+base_model: str = DEFAULT_BASE_MODEL
+lora_rank: int = 16
+if train_model:
+    st.caption("Needs the training extra (`uv sync --extra train`) and an NVIDIA GPU for real models.")
+    col_model, col_rank = st.columns([3, 1])
+    base_model = col_model.text_input(
+        "Base model to fine-tune",
+        value=DEFAULT_BASE_MODEL,
+        help="A Hugging Face model id. Instruct models with a chat template work best.",
+    )
+    lora_rank = col_rank.select_slider("LoRA rank", options=[4, 8, 16, 32, 64, 128], value=16)
+
+publish: bool = st.checkbox("Publish to Hugging Face", value=False)
 hf_repo_name: str | None = None
 if publish:
     default_repo: str = f"{os.getenv('HF_USERNAME', 'yourusername')}/brainbrew-dataset"
@@ -165,12 +187,6 @@ uploaded_files = st.file_uploader(
     type=["pdf", "txt"],
     accept_multiple_files=True,
 )
-
-# ── File safety ──────────────────────────────────────────────────────────────
-
-_SAFE_FILENAME_RE = re.compile(r"^[\w\-. ]+$")
-MAX_WARN_BYTES: int = 10 * 1024 * 1024   # warn at 10 MB
-MAX_HARD_BYTES: int = 50 * 1024 * 1024   # hard limit at 50 MB per file
 
 if uploaded_files:
     total_bytes: int = sum(getattr(f, "size", 0) or 0 for f in uploaded_files)
@@ -225,219 +241,208 @@ def _estimate(
     return f"~${cost:.2f}", f"~{minutes} min"
 
 
-est_cost, est_time = _estimate(teacher_model, dataset_size, quality_mode, use_vllm)
+est_cost, est_time = _estimate(teacher_model, dataset_size, quality_mode.value, use_vllm)
 st.info(
     f"💰 Estimated cost: **{est_cost}**  ·  ⏱️ Estimated time: **{est_time}**  "
     f"·  📦 Up to **{dataset_size}** pairs  ·  Mode: **{quality_label}**  "
-    f"·  Format: **{output_format}**"
+    f"·  Format: **{output_format.value}**"
 )
 
-# ── Proactive Input Validation ───────────────────────────────────────────────
-validation_errors = []
+# ── Validation: DistillationConfig is the single source of truth ─────────────
 
+_FIELD_LABELS: dict[str, str] = {
+    "teacher_model": "Teacher model",
+    "base_model": "Base model",
+    "hf_repo": "Hugging Face repo",
+    "api_key": "API key",
+    "hf_token": "Hugging Face token",
+    "dataset_size": "Dataset size",
+    "temperature": "Temperature",
+    "max_new_tokens": "Max answer length",
+    "batch_size": "Batch size",
+    "lora_rank": "LoRA rank",
+}
+
+
+def _friendly_errors(exc: ValidationError) -> list[str]:
+    """Turn pydantic errors into one readable line each."""
+    messages = []
+    for err in exc.errors():
+        msg = str(err["msg"]).removeprefix("Value error, ")
+        field = str(err["loc"][0]) if err["loc"] else ""
+        label = _FIELD_LABELS.get(field)
+        messages.append(f"{label}: {msg}" if label else msg)
+    return messages
+
+
+validation_errors: list[str] = []
 if not uploaded_files:
     validation_errors.append("Upload at least one document (PDF/TXT) to begin.")
 else:
     for uploaded in uploaded_files:
-        # Reset stream pointer as a best practice
-        uploaded.seek(0)
-
-        # Check filename safety
-        if not _SAFE_FILENAME_RE.match(uploaded.name):
-            validation_errors.append(
-                f"File '{uploaded.name}' has an unsafe filename. "
-                "Only alphanumeric characters, dashes, underscores, spaces, and periods are allowed."
-            )
-        # Check file size limit
-        if getattr(uploaded, "size", 0) > MAX_HARD_BYTES:
+        if (getattr(uploaded, "size", 0) or 0) > MAX_HARD_BYTES:
             validation_errors.append(
                 f"File '{uploaded.name}' exceeds the 50 MB hard size limit "
                 f"({uploaded.size / 1e6:.1f} MB)."
             )
 
-if not use_vllm and not openai_key and not os.getenv("OPENAI_API_KEY"):
-    validation_errors.append("OpenAI API Key is required when not using vLLM.")
-
-if not teacher_model or not teacher_model.strip():
-    validation_errors.append("Teacher model is required.")
-else:
-    t_stripped = teacher_model.strip()
-    if len(t_stripped) > 255:
-        validation_errors.append("Teacher model name exceeds maximum allowed length of 255 characters.")
-    if ".." in t_stripped or t_stripped.startswith("/") or t_stripped.startswith("\\"):
-        validation_errors.append("Teacher model name cannot contain path traversal or absolute local paths.")
-    if not re.match(r"^[a-zA-Z0-9_\-. /@,:]+$", t_stripped):
-        validation_errors.append("Teacher model name contains invalid characters.")
-
-if publish:
-    if not hf_token and not os.getenv("HF_TOKEN"):
-        validation_errors.append("Hugging Face Token is required when publishing.")
-
-    if not hf_repo_name or not hf_repo_name.strip():
-        validation_errors.append("Hugging Face repository name is required when publishing.")
-    else:
-        repo_stripped = hf_repo_name.strip()
-        if ".." in repo_stripped:
-            validation_errors.append("Hugging Face repository name cannot contain path traversal sequences ('..').")
-        _REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
-        if not _REPO_NAME_RE.match(repo_stripped):
-            validation_errors.append("Hugging Face repository format is invalid (must be 'username/repo-slug').")
+cfg: DistillationConfig | None = None
+try:
+    cfg = DistillationConfig(
+        teacher_model=teacher_model,
+        quality_mode=quality_mode,
+        output_format=output_format,
+        dataset_size=dataset_size,
+        use_vllm=use_vllm,
+        train_model=train_model,
+        base_model=base_model,
+        lora_rank=lora_rank,
+        publish_dataset=publish,
+        hf_repo=hf_repo_name if publish else None,
+        api_key=openai_key or os.getenv("OPENAI_API_KEY"),
+        hf_token=hf_token or os.getenv("HF_TOKEN"),
+        temperature=temperature,
+        max_new_tokens=max_new_tokens,
+        batch_size=batch_size,
+        use_semantic_chunking=use_semantic_chunking,
+        enable_dedup=enable_dedup,
+        sanitize_dataset=sanitize_dataset,
+    )
+except ValidationError as exc:
+    validation_errors.extend(_friendly_errors(exc))
 
 if validation_errors:
     st.error(
         "⚠️ **Please resolve the following issues to enable dataset generation:**\n\n"
         + "\n".join(f"- {err}" for err in validation_errors)
     )
-    button_disabled = True
     button_help = "Solve the validation errors listed above to enable dataset generation."
 else:
-    button_disabled = False
     button_help = "Click to start the synthetic dataset distillation pipeline."
+
+
+# ── Results (rendered on every rerun while this session has a run) ──────────
+
+_GRADE_EMOJI = {"SUPER": "🟢", "GOOD": "🔵", "NORMAL": "🟡", "BAD": "🟠", "DISASTER": "🔴"}
+
+
+def _preview(run: RunDir, limit: int = 5) -> list[Record]:
+    rows: list[Record] = []
+    try:
+        with open(run.records, encoding="utf-8") as fh:
+            for line in fh:
+                if len(rows) >= limit:
+                    break
+                rows.append(Record.model_validate(json.loads(line)))
+    except (OSError, ValueError):
+        logger.debug("Preview unavailable", run_id=run.run_id, exc_info=True)
+    return rows
+
+
+def _render_results(run_id: str) -> None:
+    try:
+        run = open_run(run_id)
+    except (ValueError, FileNotFoundError):
+        st.session_state.pop("run_id", None)
+        return
+    manifest: dict[str, Any] = run.read_manifest()
+    if manifest.get("status") != "succeeded":
+        return
+
+    quality = manifest.get("quality", {})
+    grade = quality.get("grade", "DISASTER")
+    st.markdown(f"### {_GRADE_EMOJI.get(grade, '⚪')} Dataset Quality: **{grade}**")
+    st.caption(quality.get("details", ""))
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Records", quality.get("record_count", 0))
+    col2.metric("Avg. Output Length", f"{quality.get('avg_output_length', 0):.0f} chars")
+    col3.metric("Uniqueness", f"{quality.get('unique_ratio', 0):.0%}")
+
+    preview = _preview(run)
+    if preview:
+        with st.expander("👀 Preview first 5 examples", expanded=True):
+            for i, rec in enumerate(preview, 1):
+                st.markdown(f"**Example {i}**")
+                with st.chat_message("user"):
+                    st.markdown(rec.prompt)
+                with st.chat_message("assistant"):
+                    st.markdown(rec.output)
+                st.divider()
+
+    dataset = run.root / str(manifest.get("dataset_file", ""))
+    if dataset.is_file():
+        st.download_button(
+            "📥 Download dataset",
+            dataset.read_bytes(),
+            file_name=f"brainbrew-{run.run_id}-{dataset.name}",
+            mime="application/jsonl",
+            on_click="ignore",
+            help="Download the generated dataset in JSONL format.",
+        )
+    adapter = run.root / str(manifest.get("adapter_file", ""))
+    if manifest.get("adapter_file") and adapter.is_file():
+        st.download_button(
+            "🎯 Download LoRA adapter",
+            adapter.read_bytes(),
+            file_name=f"brainbrew-{run.run_id}-adapter.zip",
+            mime="application/zip",
+            on_click="ignore",
+        )
+    if repo := manifest.get("published_repo"):
+        st.success(f"Published to https://huggingface.co/datasets/{repo}")
+    st.caption(f"Run `{run.run_id}` · files saved in `{run.root}`")
+
 
 # ── Generate button ──────────────────────────────────────────────────────────
 
-if st.button("🚀 Generate Dataset", type="primary", disabled=button_disabled, help=button_help):
-    if not uploaded_files:
-        st.error("Upload at least one document")
+_STAGE_LABELS: dict[int, str] = {
+    5:   "📄 Reading document…",
+    15:  "✂️  Chunking text…",
+    20:  "🤖 Initialising model…",
+    70:  "⚗️  Running pipeline… (this is the long part)",
+    80:  "🧹 Deduplicating…",
+    85:  "🧼 Sanitizing dataset…",
+    92:  "🎯 Training LoRA adapter…",
+    96:  "🚀 Publishing to Hugging Face…",
+    100: "✅ Done!",
+}
+
+if st.button(
+    "🚀 Generate Dataset", type="primary",
+    disabled=bool(validation_errors), help=button_help,
+) and cfg is not None and uploaded_files:
+    run = create_run()
+    with open(run.source, "w", encoding="utf-8") as f:
+        for uploaded in uploaded_files:
+            try:
+                f.write(read_document(uploaded.name, uploaded.getvalue()) + "\n\n")
+            except Exception as e:
+                st.warning(f"Could not parse '{uploaded.name}': {e} — skipping.")
+
+    if not run.source.read_text(encoding="utf-8").strip():
+        st.error("No text could be extracted from the uploaded documents.")
         st.stop()
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source_path: Path = tmp_path / "source.txt"
+    progress_bar = st.progress(0)
+    status = st.empty()
 
-        with open(source_path, "w", encoding="utf-8") as f:
-            for uploaded in uploaded_files:
-                # Reset stream pointer
-                uploaded.seek(0)
-                # Validate filename
-                if not _SAFE_FILENAME_RE.match(uploaded.name):
-                    st.warning(f"Skipped '{uploaded.name}' — unsafe filename.")
-                    continue
-                # Hard file-size limit per file
-                if getattr(uploaded, "size", 0) > MAX_HARD_BYTES:
-                    st.warning(f"Skipped '{uploaded.name}' — exceeds 50 MB limit.")
-                    continue
-                # Parse with error handling
-                try:
-                    if uploaded.type == "application/pdf":
-                        from pdfminer.high_level import extract_text
-                        content: str = extract_text(uploaded)
-                    else:
-                        content = uploaded.read().decode("utf-8")
-                    f.write(content + "\n\n")
-                except Exception as e:
-                    st.warning(f"Could not parse '{uploaded.name}': {e} — skipping.")
-                    continue
+    def _on_progress(pct: int) -> None:
+        progress_bar.progress(pct)
+        if label := _STAGE_LABELS.get(pct):
+            status.caption(label)
 
-        cfg = DistillationConfig(
-            teacher_model=teacher_model,
-            quality_mode=QualityMode(quality_mode),
-            output_format=OutputFormat(output_format),
-            dataset_size=dataset_size,
-            use_vllm=use_vllm,
-            train_model=train_model,
-            publish_dataset=publish,
-            hf_repo=hf_repo_name if publish else None,
-            api_key=openai_key or os.getenv("OPENAI_API_KEY"),
-            hf_token=hf_token or os.getenv("HF_TOKEN"),
-            use_semantic_chunking=use_semantic_chunking,
-            enable_dedup=enable_dedup,
-            sanitize_dataset=sanitize_dataset,
-            checkpoint_dir=str(tmp_path / "checkpoints"),
-        )
+    try:
+        result = run_distillation(cfg, run.source, _on_progress, run=run)
+    except Exception as e:
+        logger.exception("Generation failed", run_id=run.run_id)
+        st.error(f"Generation failed: {e}")
+    else:
+        st.session_state["run_id"] = result.run.run_id
+        status.empty()
+        st.success("✅ Dataset generated!")
+        st.toast("🎉 Synthetic dataset generated successfully!", icon="🧠")
+        if result.published_repo:
+            st.balloons()
 
-        # Honest progress bar with stage labels
-        progress_bar = st.progress(0)
-        status = st.empty()
-
-        _STAGE_LABELS: dict[int, str] = {
-            5:   "📄 Reading document…",
-            15:  "✂️  Chunking text…",
-            20:  "🤖 Initialising model…",
-            70:  "⚗️  Running pipeline… (this is the long part)",
-            80:  "💾 Exporting dataset…",
-            85:  "🧹 Sanitizing dataset…",
-            92:  "🎯 Training LoRA adapter…",
-            96:  "🚀 Publishing to Hugging Face…",
-            100: "✅ Done!",
-        }
-
-        def _on_progress(pct: int) -> None:
-            progress_bar.progress(pct)
-            label = _STAGE_LABELS.get(pct, "")
-            if label:
-                status.caption(label)
-
-        try:
-            final_path: Path = run_distillation(
-                cfg, source_path, _on_progress, output_dir=tmp_path
-            )
-            st.success("✅ Dataset generated!")
-            st.toast("🎉 Synthetic dataset generated successfully!", icon="🧠")
-            status.empty()
-
-            # ── Enhancement 10: Quality scoring dashboard ────────────────
-            quality_report = score_dataset(final_path)
-            grade = quality_report["grade"]
-
-            grade_colors = {
-                "SUPER": "🟢", "GOOD": "🔵", "NORMAL": "🟡",
-                "BAD": "🟠", "DISASTER": "🔴",
-            }
-            grade_emoji = grade_colors.get(grade, "⚪")
-
-            st.markdown(f"### {grade_emoji} Dataset Quality: **{grade}**")
-            st.caption(quality_report["details"])
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Records", quality_report["record_count"])
-            col2.metric("Avg. Output Length", f"{quality_report['avg_output_length']:.0f} chars")
-            col3.metric("Uniqueness", f"{quality_report['unique_ratio']:.0%}")
-
-            # ── Preview first 5 examples ─────────────────────────────────
-            try:
-                with open(final_path, encoding="utf-8") as fh:
-                    preview_rows = [json.loads(line) for line in fh if line.strip()][:5]
-                if preview_rows:
-                    with st.expander("👀 Preview first 5 examples", expanded=True):
-                        for i, row in enumerate(preview_rows, 1):
-                            st.markdown(f"**Example {i}**")
-                            # Handle different output formats using st.chat_message for rich conversational UI
-                            if "instruction" in row:
-                                with st.chat_message("user"):
-                                    st.markdown(row["instruction"])
-                                output_text = row.get("output", "")
-                                with st.chat_message("assistant"):
-                                    st.markdown(output_text)
-                            elif "messages" in row:
-                                for msg in row["messages"]:
-                                    role = msg.get("role", "user")
-                                    clean_role = role if role in ["user", "assistant", "system"] else "user"
-                                    with st.chat_message(clean_role):
-                                        st.markdown(msg.get("content", ""))
-                            elif "conversations" in row:
-                                for turn in row["conversations"]:
-                                    who = turn.get("from", "human")
-                                    role_map = {"human": "user", "user": "user", "gpt": "assistant", "assistant": "assistant", "system": "system"}
-                                    clean_role = role_map.get(who.lower(), "user")
-                                    with st.chat_message(clean_role):
-                                        st.markdown(turn.get("value", ""))
-                            st.divider()
-            except Exception:
-                logger.debug("Preview rendering failed", exc_info=True)
-
-            # FIX H-03: use context manager for file handle
-            with open(final_path, encoding="utf-8") as f:
-                st.download_button(
-                    "📥 Download dataset",
-                    f.read(),
-                    file_name=final_path.name,
-                    help="Click to download the generated synthetic dataset file in JSONL format.",
-                )
-
-            if cfg.publish_dataset:
-                st.balloons()
-
-        except Exception as e:
-            logger.exception("Failed")
-            st.error(f"Generation failed: {e}")
+if "run_id" in st.session_state:
+    _render_results(st.session_state["run_id"])

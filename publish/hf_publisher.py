@@ -4,13 +4,11 @@ Brainbrew HF publisher — push generated datasets to the Hugging Face Hub.
 from __future__ import annotations
 
 import os
-import re
 
 from datasets import load_dataset
 from huggingface_hub import HfApi
 
-# FIX M-10: repo name must be username/slug format
-_REPO_NAME_RE = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
+from config import check_hf_repo_name
 
 
 def publish_dataset(
@@ -37,17 +35,8 @@ def publish_dataset(
             "A Hugging Face token is required. Set HF_TOKEN in your environment."
         )
 
-    # FIX M-10: validate repo name format
-    if ".." in repo_name:
-        raise ValueError(
-            f"Invalid repo name: {repo_name!r}. "
-            "Cannot contain path traversal sequences ('..')."
-        )
-    if not _REPO_NAME_RE.match(repo_name):
-        raise ValueError(
-            f"Invalid repo name: {repo_name!r}. "
-            "Must be in 'username/repo-slug' format (letters, numbers, hyphens, dots, underscores)."
-        )
+    # FIX M-10: same repo-name rule as the UI and DistillationConfig
+    repo_name = check_hf_repo_name(repo_name)
 
     api = HfApi(token=token)
 

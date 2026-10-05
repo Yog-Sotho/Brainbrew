@@ -1,8 +1,8 @@
 """
-Brainbrew exporter — converts raw distilabel output to training-ready formats.
+Brainbrew exporter — deduplicates canonical records and formats them for training.
 
-Supports four output formats:
-  - Alpaca:   {"instruction": ..., "input": "", "output": ...}
+Formatting happens only here, at the very end of the pipeline:
+  - Alpaca:   {"instruction": ..., "input": ..., "output": ...}
   - ShareGPT: {"conversations": [{"from": "human", ...}, {"from": "gpt", ...}]}
   - ChatML:   {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
   - OpenAI:   {"messages": [{"role": "system", ...}, {"role": "user", ...}, ...]}
@@ -14,48 +14,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable, Iterable
+from pathlib import Path
+from typing import Any
+
+from pipeline.records import Record
 
 logger = logging.getLogger(__name__)
-
-# FIX M-08: hard limit to prevent runaway memory on malformed input
-MAX_RECORDS: int = 500_000
-
-
-def _read_raw_records(
-    input_path: str,
-    max_records: int = MAX_RECORDS,
-) -> list[dict]:
-    """Stream-read JSONL and return valid instruction/output records.
-
-    FIX L-08: reads line-by-line to avoid loading entire file into memory.
-    FIX M-08: stops after max_records to prevent OOM on corrupted files.
-    """
-    records: list[dict] = []
-    with open(input_path, encoding="utf-8") as fin:
-        for line_num, line in enumerate(fin, 1):
-            if line_num > max_records:
-                logger.warning(
-                    "Record limit reached (%d). Remaining lines skipped.", max_records
-                )
-                break
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            # Support both 'output' (post-rename) and 'generation' (raw distilabel)
-            output = obj.get("output") or obj.get("generation") or ""
-            instruction = obj.get("instruction", "")
-            if not instruction or not output:
-                continue
-            records.append({
-                "instruction": instruction,
-                "input": obj.get("input", ""),
-                "output": output,
-            })
-    return records
 
 
 # ── Enhancement 5: Deduplication ─────────────────────────────────────────────
@@ -82,9 +47,9 @@ def _jaccard_similarity(a: set[str], b: set[str]) -> float:
 
 
 def deduplicate_records(
-    records: list[dict],
+    records: list[Record],
     similarity_threshold: float = 0.85,
-) -> list[dict]:
+) -> list[Record]:
     """Remove exact and near-duplicate records.
 
     Strategy:
@@ -97,7 +62,7 @@ def deduplicate_records(
     instruction and output similarities, both must be >= 2 * threshold - 1.0.
 
     Args:
-        records: List of {"instruction", "input", "output"} dicts.
+        records: Canonical records.
         similarity_threshold: Jaccard threshold above which records are
                               considered duplicates (default 0.85).
 
@@ -108,7 +73,7 @@ def deduplicate_records(
         return records
 
     seen_hashes: set[str] = set()
-    unique: list[dict] = []
+    unique: list[Record] = []
     # Store shingles alongside their lengths for O(1) ratio pruning
     shingle_index: list[tuple[set[str], set[str], int, int]] = []
 
@@ -117,15 +82,15 @@ def deduplicate_records(
 
     for rec in records:
         # Step 1: exact hash dedup
-        content_key = f"{rec['instruction']}|||{rec['output']}"
+        content_key = f"{rec.instruction}|||{rec.output}"
         content_hash = hashlib.sha256(content_key.encode("utf-8")).hexdigest()
         if content_hash in seen_hashes:
             continue
         seen_hashes.add(content_hash)
 
         # Step 2: near-duplicate via shingle Jaccard
-        inst_shingles = _ngram_shingles(rec["instruction"])
-        out_shingles = _ngram_shingles(rec["output"])
+        inst_shingles = _ngram_shingles(rec.instruction)
+        out_shingles = _ngram_shingles(rec.output)
         len_inst = len(inst_shingles)
         len_out = len(out_shingles)
 
@@ -171,100 +136,70 @@ def deduplicate_records(
 
 # ── Format converters ────────────────────────────────────────────────────────
 
-def _to_alpaca(rec: dict) -> dict:
+OPENAI_SYSTEM_PROMPT = "You are a helpful assistant."
+
+
+def to_alpaca(rec: Record) -> dict[str, Any]:
+    return {"instruction": rec.instruction, "input": rec.input, "output": rec.output}
+
+
+def to_sharegpt(rec: Record) -> dict[str, Any]:
     return {
-        "instruction": rec["instruction"],
-        "input": rec.get("input", ""),
-        "output": rec["output"],
-    }
-
-
-def _to_sharegpt(rec: dict) -> dict:
-    conversations = [
-        {"from": "human", "value": rec["instruction"]},
-        {"from": "gpt", "value": rec["output"]},
-    ]
-    if rec.get("input"):
-        conversations[0]["value"] += f"\n\nContext: {rec['input']}"
-    return {"conversations": conversations}
-
-
-def _to_chatml(rec: dict) -> dict:
-    user_content = rec["instruction"]
-    if rec.get("input"):
-        user_content += f"\n\n{rec['input']}"
-    return {
-        "messages": [
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": rec["output"]},
+        "conversations": [
+            {"from": "human", "value": rec.prompt},
+            {"from": "gpt", "value": rec.output},
         ]
     }
 
 
-def _to_openai(rec: dict) -> dict:
-    user_content = rec["instruction"]
-    if rec.get("input"):
-        user_content += f"\n\n{rec['input']}"
+def to_chatml(rec: Record) -> dict[str, Any]:
     return {
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": rec["output"]},
+            {"role": "user", "content": rec.prompt},
+            {"role": "assistant", "content": rec.output},
         ]
     }
 
 
-_FORMATTERS = {
-    "alpaca": _to_alpaca,
-    "sharegpt": _to_sharegpt,
-    "chatml": _to_chatml,
-    "openai": _to_openai,
+def to_openai(rec: Record) -> dict[str, Any]:
+    return {
+        "messages": [
+            {"role": "system", "content": OPENAI_SYSTEM_PROMPT},
+            {"role": "user", "content": rec.prompt},
+            {"role": "assistant", "content": rec.output},
+        ]
+    }
+
+
+FORMATTERS: dict[str, Callable[[Record], dict[str, Any]]] = {
+    "alpaca": to_alpaca,
+    "sharegpt": to_sharegpt,
+    "chatml": to_chatml,
+    "openai": to_openai,
 }
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def export_dataset(
-    input_path: str,
-    output_path: str,
+    records: Iterable[Record],
+    output_path: Path,
     output_format: str = "alpaca",
-    enable_dedup: bool = True,
-    max_records: int = MAX_RECORDS,
 ) -> int:
-    """Read raw JSONL, optionally deduplicate, and export in the chosen format.
-
-    Args:
-        input_path: Path to raw distilabel JSONL.
-        output_path: Destination path for the formatted JSONL.
-        output_format: One of 'alpaca', 'sharegpt', 'chatml', 'openai'.
-        enable_dedup: Whether to run deduplication (Enhancement 5).
-        max_records: Maximum records to process (FIX M-08).
+    """Write canonical records to *output_path* in the chosen training format.
 
     Returns:
         Number of records written.
     """
-    formatter = _FORMATTERS.get(output_format)
+    formatter = FORMATTERS.get(output_format)
     if formatter is None:
         raise ValueError(
             f"Unknown output format: {output_format!r}. "
-            f"Supported: {', '.join(_FORMATTERS.keys())}"
+            f"Supported: {', '.join(FORMATTERS)}"
         )
-
-    records = _read_raw_records(input_path, max_records=max_records)
-
-    if enable_dedup:
-        records = deduplicate_records(records)
-
+    count = 0
     with open(output_path, "w", encoding="utf-8") as fout:
         for rec in records:
-            formatted = formatter(rec)
-            fout.write(json.dumps(formatted, ensure_ascii=False) + "\n")
-
-    return len(records)
-
-
-# ── Backward-compatible alias ────────────────────────────────────────────────
-
-def export_alpaca(input_path: str, output_path: str) -> None:
-    """Legacy wrapper — calls export_dataset with alpaca format, no dedup."""
-    export_dataset(input_path, output_path, output_format="alpaca", enable_dedup=False)
+            fout.write(json.dumps(formatter(rec), ensure_ascii=False) + "\n")
+            count += 1
+    return count

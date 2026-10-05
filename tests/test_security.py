@@ -128,25 +128,25 @@ class TestFilenameSanitisation:
 class TestHfRepoNameValidation:
 
     def test_valid_repo_name_format(self):
-        from publish.hf_publisher import _REPO_NAME_RE
+        from config import HF_REPO_RE as _REPO_NAME_RE
         assert _REPO_NAME_RE.match("user/dataset")
         assert _REPO_NAME_RE.match("my-org/my_dataset-v2")
         assert _REPO_NAME_RE.match("user123/repo.name")
 
     def test_invalid_repo_name_no_slash(self):
-        from publish.hf_publisher import _REPO_NAME_RE
+        from config import HF_REPO_RE as _REPO_NAME_RE
         assert not _REPO_NAME_RE.match("just-a-name")
 
     def test_invalid_repo_name_double_slash(self):
-        from publish.hf_publisher import _REPO_NAME_RE
+        from config import HF_REPO_RE as _REPO_NAME_RE
         assert not _REPO_NAME_RE.match("user/sub/repo")
 
     def test_invalid_repo_name_empty(self):
-        from publish.hf_publisher import _REPO_NAME_RE
+        from config import HF_REPO_RE as _REPO_NAME_RE
         assert not _REPO_NAME_RE.match("")
 
     def test_invalid_repo_name_spaces(self):
-        from publish.hf_publisher import _REPO_NAME_RE
+        from config import HF_REPO_RE as _REPO_NAME_RE
         assert not _REPO_NAME_RE.match("user/my dataset")
 
 
@@ -162,10 +162,12 @@ class TestCombinedSecurityInvariants:
             teacher_model="gpt-4o",
             api_key="sk-never-log-this",
             hf_repo="user/dataset",
+            hf_token="hf_never_log_this",
             publish_dataset=True,
         )
-        representation = repr(cfg) + str(cfg.safe_dict())
+        representation = repr(cfg) + str(cfg.safe_dict()) + str(cfg.public_dict())
         assert "sk-never-log-this" not in representation
+        assert "hf_never_log_this" not in representation
 
     def test_safe_dict_is_json_serialisable(self):
         import json
@@ -203,7 +205,7 @@ class TestHfTokenAndRepoSecurity:
         from pydantic import ValidationError
 
         from config import DistillationConfig
-        with pytest.raises(ValidationError, match="Invalid Hugging Face repository name format"):
+        with pytest.raises(ValidationError, match="Invalid Hugging Face repository name"):
             DistillationConfig(teacher_model="gpt-4o", hf_repo="invalid-repo-format-no-slash")
 
     def test_publish_dataset_requires_hf_repo(self):
@@ -317,52 +319,26 @@ class TestInputValidationSecurity:
         with pytest.raises(ValidationError, match="Model name contains invalid characters"):
             DistillationConfig(teacher_model=invalid_name)
 
-    def test_judge_model_validation(self):
+    def test_base_model_validation(self):
         from pydantic import ValidationError
 
         from config import DistillationConfig
-        # Verify valid judge model is accepted
-        cfg = DistillationConfig(teacher_model="gpt-4o", judge_model="gpt-4o-mini")
-        assert cfg.judge_model == "gpt-4o-mini"
+        cfg = DistillationConfig(teacher_model="gpt-4o", base_model="Qwen/Qwen3-4B-Instruct-2507")
+        assert cfg.base_model == "Qwen/Qwen3-4B-Instruct-2507"
 
-        # Verify invalid paths or traversals are rejected
         with pytest.raises(ValidationError, match="Model name cannot contain path traversal or absolute local paths"):
-            DistillationConfig(teacher_model="gpt-4o", judge_model="../../etc/passwd")
-
-        # Verify long names are rejected
+            DistillationConfig(teacher_model="gpt-4o", base_model="../../etc/passwd")
         with pytest.raises(ValidationError, match="Model name exceeds maximum allowed length"):
-            DistillationConfig(teacher_model="gpt-4o", judge_model="a" * 256)
-
-        # Verify invalid characters are rejected
+            DistillationConfig(teacher_model="gpt-4o", base_model="a" * 256)
         with pytest.raises(ValidationError, match="Model name contains invalid characters"):
-            DistillationConfig(teacher_model="gpt-4o", judge_model="model; rm -rf /")
+            DistillationConfig(teacher_model="gpt-4o", base_model="model; rm -rf /")
 
-    def test_checkpoint_dir_validation(self):
-        from pydantic import ValidationError
+    @pytest.mark.parametrize("run_id", [
+        "../../etc", "20261005-120000-abcdef/../x", "/abs/path", "", "20261005-120000-ABCDEF",
+        "20261005-120000-abcdef\n",
+    ])
+    def test_run_ids_cannot_escape_runs_dir(self, run_id):
+        from pipeline.runs import open_run
 
-        from config import DistillationConfig
-        # Verify valid directory path is accepted
-        cfg = DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints/run1")
-        assert cfg.checkpoint_dir == "checkpoints/run1"
-
-        # Verify path traversal is rejected
-        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain path traversal sequences"):
-            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints/../secret")
-
-        # Verify absolute local paths are rejected
-        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain absolute local paths"):
-            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="/absolute/path")
-        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain absolute local paths"):
-            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="\\absolute\\path")
-        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain absolute local paths"):
-            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="C:absolute")
-        with pytest.raises(ValidationError, match="Checkpoint directory path cannot contain absolute local paths"):
-            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="d:\\absolute")
-
-        # Verify excessive length is rejected
-        with pytest.raises(ValidationError, match="Checkpoint directory path exceeds maximum allowed length"):
-            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="a" * 513)
-
-        # Verify control characters are rejected
-        with pytest.raises(ValidationError, match="Checkpoint directory path contains invalid or control characters"):
-            DistillationConfig(teacher_model="gpt-4o", checkpoint_dir="checkpoints\nrun")
+        with pytest.raises(ValueError, match="Invalid run id"):
+            open_run(run_id)
