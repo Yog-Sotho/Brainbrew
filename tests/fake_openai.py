@@ -56,6 +56,8 @@ class FakeOpenAI:
 
     reject_json_schema: bool = False      # 400 on response_format=json_schema
     reject_json_object: bool = False      # 400 on response_format=json_object too
+    reject_status: int = 400              # llama-cpp-python's server rejects with 500
+    server_error_first: bool = False      # first request gets a plain 500
     garbage_json_first: bool = False      # first structured reply is not JSON
     refuse_every: int = 0                 # every Nth answer is a refusal
     low_score_every: int = 0              # every Nth judge call scores 2
@@ -83,15 +85,19 @@ class FakeOpenAI:
             return httpx2.Response(401, json={"error": {"message": "bad key", "type": "invalid_api_key"}})
         if self.rate_limit_first and self._bump("http") == 1:
             return httpx2.Response(429, headers={"retry-after": "0"}, json={"error": {"message": "slow down"}})
+        if self.server_error_first and self._bump("server_error") == 1:
+            return httpx2.Response(500, json={"error": {"message": "CUDA error: out of memory"}})
         body = json.loads(request.content)
         self.calls.append(body)
         if request.url.path.endswith("/embeddings"):
             return self._embeddings(body)
         fmt = (body.get("response_format") or {}).get("type")
         if fmt == "json_schema" and self.reject_json_schema:
-            return httpx2.Response(400, json={"error": {"message": "response_format json_schema not supported"}})
+            return httpx2.Response(self.reject_status,
+                                   json={"error": {"message": "response_format json_schema not supported"}})
         if fmt == "json_object" and self.reject_json_object:
-            return httpx2.Response(400, json={"error": {"message": "response_format json_object not supported"}})
+            return httpx2.Response(self.reject_status,
+                                   json={"error": {"message": "response_format json_object not supported"}})
         content = self._reply(body["messages"])
         return httpx2.Response(200, json={
             "id": f"chatcmpl-{_tag(content)}", "object": "chat.completion", "created": 0,

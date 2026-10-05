@@ -25,6 +25,12 @@ _PREAMBLE_RE = re.compile(
 )
 _HEADING_RE = re.compile(r"^\s*(?:#+\s*[^\n]*\n|\*\*[^*\n]+\*\*\s*\n)")
 _LABEL_RE = re.compile(r"^\s*(?:\d+[.)]\s*|[-*]\s*|(?:question|q)\s*\d*\s*[:.-]\s*)", re.IGNORECASE)
+# Questions must stand alone: a trainee never sees "passage B" or "the text above".
+_SOURCE_REF_RE = re.compile(
+    r"\bpassages? [AB]\b|\b(?:the|this|that|above|given|provided|following|preceding) (?:passage|excerpt|context)\b"
+    r"|\b(?:according to|based on|in|from) the (?:given |above |provided |following )?(?:text|document|source)\b",
+    re.IGNORECASE,
+)
 _PROMPT_LEAK_RE = re.compile(r"#?\s*(?:the )?(?:given|rewritten|created) prompt#?", re.IGNORECASE)
 
 _REFUSAL_RE = re.compile(
@@ -54,7 +60,7 @@ def clean_question(text: str) -> str | None:
         if q == before:
             break
     q = _LABEL_RE.sub("", q, count=1).strip().strip('"').strip()
-    if len(q) < MIN_QUESTION_CHARS or _PROMPT_LEAK_RE.search(q):
+    if len(q) < MIN_QUESTION_CHARS or _PROMPT_LEAK_RE.search(q) or _SOURCE_REF_RE.search(q):
         return None
     return q
 

@@ -39,6 +39,9 @@ MAX_SOURCE_BYTES: int = 100 * 1024 * 1024  # 100 MB
 # ---------------------------------------------------------------------------
 # Clients
 # ---------------------------------------------------------------------------
+ClientFactory = Callable[[EndpointSettings], ChatClient]
+
+
 def _make_client(settings: EndpointSettings) -> ChatClient:
     """Create a chat client (tests replace this to plug in a fake server)."""
     return ChatClient(settings)
@@ -60,14 +63,15 @@ async def _generate(
     cfg: DistillationConfig,
     chunks: list[str],
     progress: Callable[[float], None],
+    make_client: ClientFactory,
 ) -> tuple[list[Record], SynthStats, dict[str, dict[str, int]]]:
-    teachers = [_make_client(_endpoint(cfg, m)) for m in cfg.teacher_models]
+    teachers = [make_client(_endpoint(cfg, m)) for m in cfg.teacher_models]
     judge = None
     if cfg.uses_judge:
-        judge = _make_client(_endpoint(cfg, cfg.judge_model or cfg.teacher_models[0], temperature=0.0))
+        judge = make_client(_endpoint(cfg, cfg.judge_model or cfg.teacher_models[0], temperature=0.0))
     embedder = None
     if cfg.enable_dedup and cfg.embedding_model:
-        embedder = _make_client(_endpoint(cfg, cfg.embedding_model))
+        embedder = make_client(_endpoint(cfg, cfg.embedding_model))
     settings = SynthSettings(
         target=cfg.dataset_size,
         evolve=cfg.evolves,
@@ -151,6 +155,7 @@ def run_distillation(
     source_file: Path,
     progress_callback: Callable[[int], None] | None = None,
     run: RunDir | None = None,
+    client_factory: ClientFactory | None = None,
 ) -> RunResult:
     """Run the full Brainbrew pipeline inside a persistent run directory.
 
@@ -159,6 +164,7 @@ def run_distillation(
         source_file: Path to concatenated source text (copied into the run dir).
         progress_callback: Optional callback receiving progress 0-100.
         run: Run directory to use (a new one is created when omitted).
+        client_factory: Builds the model clients (default: a real ChatClient per endpoint).
 
     Returns:
         RunResult pointing at the exported dataset and run directory.
@@ -168,7 +174,7 @@ def run_distillation(
     run.update_manifest(status="running", started_at=utc_now(), config=cfg.public_dict())
 
     try:
-        result = _run(cfg, source_file, run, progress_callback)
+        result = _run(cfg, source_file, run, progress_callback, client_factory or _make_client)
     except BaseException as exc:
         run.update_manifest(status="failed", finished_at=utc_now(), error=str(exc)[:1000])
         raise
@@ -182,6 +188,7 @@ def _run(
     source_file: Path,
     run: RunDir,
     progress_callback: Callable[[int], None] | None,
+    make_client: ClientFactory,
 ) -> RunResult:
     def _progress(pct: int) -> None:
         if progress_callback:
@@ -209,7 +216,7 @@ def _run(
     def _gen_progress(fraction: float) -> None:
         _progress(15 + int(fraction * 55))
 
-    records, stats, usage = asyncio.run(_generate(cfg, chunks, _gen_progress))
+    records, stats, usage = asyncio.run(_generate(cfg, chunks, _gen_progress, make_client))
     write_records(run.raw, records)
     counts: dict[str, int] = {"chunks": len(chunks), "generated": len(records)}
     run.update_manifest(counts=counts, generation=stats.as_dict(), usage=usage)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "brainbrew"
-version = "1.2.0"
+version = "2.0.0"
 description = "No-code synthetic LLM training dataset generator"
 readme = "README.md"
 license = "MIT"
@@ -101,7 +101,7 @@ python_functions = ["test_*"]
 
 [tool.coverage.run]
 source = ["."]
-omit = ["tests/*", "old/*", ".venv/*"]
+omit = ["tests/*", "old/*", ".venv/*", "bench/make_fixtures.py"]
 
 # ── mypy ─────────────────────────────────────────────────────────────────────
 

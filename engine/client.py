@@ -23,7 +23,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx2
-from openai import AsyncOpenAI, BadRequestError, UnprocessableEntityError
+from openai import (
+    APIStatusError,
+    AsyncOpenAI,
+    BadRequestError,
+    InternalServerError,
+    UnprocessableEntityError,
+)
 from pydantic import BaseModel, ValidationError
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
@@ -220,7 +226,9 @@ class ChatClient:
                     msgs = _with_schema_hint(messages, schema)
                 return await self.chat(msgs, temperature=temperature, max_tokens=max_tokens,
                                        response_format=fmt)
-            except (BadRequestError, UnprocessableEntityError):
+            except (BadRequestError, UnprocessableEntityError, InternalServerError) as exc:
+                if not _rejects_response_format(exc):
+                    raise
                 # The server rejected this response_format: degrade once, remember it.
                 next_mode = {"json_schema": "json_object", "json_object": "prompt"}.get(mode)
                 if next_mode is None:
@@ -229,6 +237,18 @@ class ChatClient:
                     if self._caps.response_format == mode:
                         self._caps.response_format = next_mode
                 mode = self._caps.response_format
+
+
+def _rejects_response_format(exc: APIStatusError) -> bool:
+    """A 400/422 on a structured request, or a 5xx that names `response_format`.
+
+    Most servers answer an unsupported response_format with 400 or 422;
+    llama-cpp-python's server answers 500 with a validation message instead.
+    Any other 5xx is a real server failure and is not a capability signal.
+    """
+    if isinstance(exc, (BadRequestError, UnprocessableEntityError)):
+        return True
+    return "response_format" in str(exc)
 
 
 def _with_schema_hint(messages: list[dict[str, str]], schema: type[BaseModel]) -> list[dict[str, str]]:

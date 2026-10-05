@@ -121,6 +121,27 @@ Each of these is supported by current practice (see Sources in the audit):
 
 **Gate:** on a fixed benchmark corpus checked into `tests/fixtures/` (e.g. 3 public-domain PDFs), judge-faithfulness is ≥ 4.0 on average, the near-dup rate is < 2 %, the refusal rate is 0 and yield is within ±10 % of the target. Track these in a `bench/` script that CI runs nightly with a cheap model.
 
+### Phase 2 status (2026-10-05): implemented; gate machinery in place
+
+| # | Result |
+|---|---|
+| 2.1 | distilabel removed. `engine/client.py`: one async client (openai SDK) for OpenAI, `vllm serve`, Ollama, llama.cpp and custom URLs, with a concurrency semaphore, SDK transport retries (408/409/429/5xx, Retry-After) and tenacity content retries. Structured output degrades `json_schema` → `json_object` → schema-in-prompt and remembers what the server supports. Timeout and parallel requests are settings. vLLM is a separate server: `compose.yaml` runs the CPU app next to `vllm/vllm-openai` (endpoint locked, vLLM port not published) and `install.sh` writes `run_vllm.sh`. The server key is only sent to the server's own endpoint; `BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0` locks the endpoint. |
+| 2.2 | `pipeline/synth.py` + `pipeline/prompts.py`: per chunk, *k* typed questions (factual, conceptual, procedural, comparative, multi-hop over the next chunk) with an avoid-list of questions already asked; each answered with its passage in context. Research mode evolves questions and keeps them only if still answerable from the source. |
+| 2.3 | Judge (Balanced/Research): faithfulness, helpfulness and correctness 1–5 as structured output at temperature 0; all three must reach the threshold (default 4). Scores stored in `meta.judge`. |
+| 2.4 | `pipeline/filters.py`: rewrite preambles, list labels, prompt leaks and questions that point at "the passage" are cleaned or dropped; empty, `UNANSWERABLE`, short, refusal, deflection and "according to the passage" answers are filtered. Built from the failures in the Phase 1 gate data. |
+| 2.5 | MinHash-LSH (128 permutations, char 5-grams): same result as the old O(N²) dedup, 5.1 s instead of 70.9 s on 5.5k records. Optional embedding model (same endpoint) removes paraphrases per round, so the target is still met. Only accepted pairs enter either index. |
+| 2.6 | `pipeline/decontam.py`: 13-gram overlap (whole-item match for 8–12-word items) against GSM8K, MMLU, ARC-Challenge, TruthfulQA and HumanEval, chosen in the sidebar. Checked on the real sets: all five index in ~18 s, a GSM8K item is caught, ordinary text is not. |
+| 2.7 | `pipeline/pii.py`: Luhn-checked cards, mod-97 IBANs, IPv4/IPv6 that skip version numbers, OIDs and loopback, URL policy (keep site / remove / keep; credentials and secret query values always removed, URLs handled before emails). Optional Presidio backend (`pii` extra) using the installed spaCy English model, verified against real Presidio + `en_core_web_sm`. |
+| 2.8 | Generation runs in rounds until the target is reached or every chunk is exhausted (the per-chunk question count adapts to the observed acceptance rate); the result is deterministic. The UI shows chunks and the pairs they can support before the run and warns when the target exceeds it. |
+
+**Gate machinery.** `tests/fixtures/bench/` holds three public-domain PDFs rebuilt by `bench/make_fixtures.py` (Federalist No. 10, ch. II of *The Elements of Style*, ch. III of *On the Origin of Species*: argument, procedural rules, scientific exposition). `bench/run_bench.py` runs the real pipeline on each and checks the gate per document: faithfulness from an independent judge pass over the final records, question-level near-duplicate rate (MinHash ≥ 0.8), refusal rate and yield. `.github/workflows/bench.yml` runs it nightly with `gpt-4o-mini` when the `OPENAI_API_KEY` secret is set (otherwise it skips with a notice); `tests/test_bench.py` runs the same script offline in CI.
+
+**Found while testing against a real server (not in the audit):**
+
+- llama-cpp-python's server rejects `response_format: json_schema` with **500**, not 400/422, so the fallback never triggered and every structured call failed. A 5xx that names `response_format` now degrades too; any other 5xx is still an outage.
+- A 3B teacher writes questions such as "…in the text following passage B?", which mean nothing without the prompt. Such questions are now dropped.
+- `SemanticDeduplicator` defines `__len__`, so an empty one was falsy and `if self.semantic` skipped semantic dedup entirely. Explicit `is not None` checks; a test asserts paraphrases are actually removed.
+
 ## Phase 3: Operability (about 1 week)
 
 | # | Task |

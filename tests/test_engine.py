@@ -55,6 +55,19 @@ class TestStructuredOutput:
         assert kinds == ["json_schema", "json_object", "json_object"]
         assert "JSON schema" in fake.calls[1]["messages"][0]["content"]
 
+    def test_500_naming_response_format_also_degrades(self):
+        # llama-cpp-python's server rejects json_schema with a 500 validation error.
+        fake = FakeOpenAI(reject_json_schema=True, reject_status=500)
+        qs = _run(_client(fake).chat_json(QUESTIONS, QuestionSet))
+        assert qs.questions
+        assert (fake.calls[-1].get("response_format") or {}).get("type") == "json_object"
+
+    def test_other_server_errors_do_not_degrade(self):
+        fake = FakeOpenAI(server_error_first=True)
+        client = _client(fake)
+        _run(client.chat_json(QUESTIONS, QuestionSet))  # the SDK retries the 500
+        assert client._caps.response_format == "json_schema"
+
     def test_falls_back_to_prompt_only(self):
         fake = FakeOpenAI(reject_json_schema=True, reject_json_object=True)
         _run(_client(fake).chat_json(QUESTIONS, QuestionSet))

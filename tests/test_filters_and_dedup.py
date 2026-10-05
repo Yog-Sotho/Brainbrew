@@ -25,6 +25,9 @@ class TestCleanQuestion:
         ("1. How do plants store energy?", "How do plants store energy?"),
         ("Question: How do plants store energy?", "How do plants store energy?"),
         ('"How do plants store energy?"', "How do plants store energy?"),
+        # Talking about a text is fine when the text is the subject, not the source.
+        ("How should the text of a long quotation be punctuated?",
+         "How should the text of a long quotation be punctuated?"),
     ])
     def test_cleans(self, raw, clean):
         assert clean_question(raw) == clean
@@ -34,6 +37,11 @@ class TestCleanQuestion:
         "**Given Prompt:** Explain the following concept from the document clearly and completely:",
         "Why?",
         "",
+        # Seen with a 3B teacher in the Phase 2 gate run: not self-contained.
+        "What is the main difference between identifying an audience and identifying the day of a place in "
+        "the comparison made in the text following passage B?",
+        "According to the passage, why do plants need light?",
+        "Based on the text, when is a comma required?",
     ])
     def test_drops(self, raw):
         assert clean_question(raw) is None
