@@ -47,6 +47,7 @@ MAX_QUESTIONS_PER_CHUNK = 8
 PAIRS_PER_CHUNK_ESTIMATE = 6
 MAX_ROUNDS = 4
 AVOID_LIST_SIZE = 40
+MAX_REJECTED_KEPT = 1000
 
 # Errors that no retry or other chunk can fix: stop the whole run.
 FATAL_ERRORS = (AuthenticationError, PermissionDeniedError, NotFoundError)
@@ -57,7 +58,8 @@ class SynthStats:
     chunks: int = 0
     rounds: int = 0
     questions_generated: int = 0
-    questions_dropped: int = 0
+    questions_dropped: int = 0  # malformed or not self-contained
+    questions_repeated: int = 0
     evolved: int = 0
     evolve_unanswerable: int = 0
     answers: int = 0
@@ -70,8 +72,11 @@ class SynthStats:
     accepted: int = 0
     exhausted_chunks: int = 0
 
+    # Rejected pairs with the reason in meta["rejected"], for inspection (capped).
+    rejected: list[Record] = field(default_factory=list, repr=False)
+
     def as_dict(self) -> dict[str, Any]:
-        d = {k: v for k, v in self.__dict__.items() if k != "answers_filtered"}
+        d = {k: v for k, v in self.__dict__.items() if k not in ("answers_filtered", "rejected")}
         d["answers_filtered"] = dict(self.answers_filtered)
         return d
 
@@ -124,6 +129,7 @@ class _Run:
         self.semantic = SemanticDeduplicator(settings.semantic_threshold) if embedder else None
         self.asked: dict[int, list[str]] = {i: [] for i in range(len(chunks))}
         self.exhausted: set[int] = set()
+        self.empty_rounds: dict[int, int] = dict.fromkeys(range(len(chunks)), 0)
         self.accepted: list[Record] = []
         # Pairs that passed filters and judge this round, keyed for a stable order.
         self.candidates: list[tuple[tuple[int, int, int], Record]] = []
@@ -145,18 +151,27 @@ class _Run:
 
         seen = {normalise(q) for q in self.asked[i]}
         fresh: list[tuple[QuestionType, str]] = []
+        repeated = 0
         for gq in qset.questions:
             self.stats.questions_generated += 1
             q = clean_question(gq.question)
-            if q is None or normalise(q) in seen:
+            if q is None:
                 self.stats.questions_dropped += 1
+                continue
+            if normalise(q) in seen:
+                repeated += 1
                 continue
             seen.add(normalise(q))
             self.asked[i].append(q)
             fresh.append((gq.type, q))
+        self.stats.questions_repeated += repeated
         if not fresh:
-            self.exhausted.add(i)
+            # Only repeats left: the chunk is used up. Malformed questions get one more round.
+            self.empty_rounds[i] += 1
+            if (repeated and repeated == len(qset.questions)) or self.empty_rounds[i] >= 2:
+                self.exhausted.add(i)
             return
+        self.empty_rounds[i] = 0
 
         await asyncio.gather(*(
             self.pair(rnd, i, n, qtype, q, teacher, nxt) for n, (qtype, q) in enumerate(fresh)
@@ -184,6 +199,7 @@ class _Run:
             problem = answer_problem(answer)
             if problem:
                 self.stats.answers_filtered[problem] += 1
+                self._reject(rnd, i, qtype, question, answer, teacher, f"filter: {problem}")
                 return
 
             scores: JudgeScores | None = None
@@ -192,6 +208,7 @@ class _Run:
                 self.stats.judged += 1
                 if not judge_passes(scores, self.s.judge_threshold):
                     self.stats.judge_rejected += 1
+                    self._reject(rnd, i, qtype, question, answer, teacher, "judge", scores)
                     return
         except FATAL_ERRORS:
             raise
@@ -212,6 +229,18 @@ class _Run:
             },
         )
         self.candidates.append(((rnd, i, n), rec))
+
+    def _reject(
+        self, rnd: int, i: int, qtype: QuestionType, question: str, answer: str,
+        teacher: ChatClient, reason: str, scores: JudgeScores | None = None,
+    ) -> None:
+        if len(self.stats.rejected) >= MAX_REJECTED_KEPT or not answer.strip():
+            return
+        self.stats.rejected.append(Record(
+            instruction=question, output=answer,
+            meta={"chunk": i, "type": qtype, "round": rnd, "model": teacher.settings.model,
+                  "rejected": reason, "judge": scores.model_dump() if scores else None},
+        ))
 
     async def accept_round(self) -> None:
         """Dedup and accept this round's candidates in a stable order, up to the target.

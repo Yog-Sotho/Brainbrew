@@ -61,6 +61,11 @@ class RunDir:
         return self.root / "records.jsonl"
 
     @property
+    def rejected(self) -> Path:
+        """Pairs the filters or the judge rejected, with the reason in meta."""
+        return self.root / "rejected.jsonl"
+
+    @property
     def manifest_path(self) -> Path:
         return self.root / "manifest.json"
 

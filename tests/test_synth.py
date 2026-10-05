@@ -79,6 +79,31 @@ class TestTarget:
         assert len(recs) == 10  # 5 chunks × 2 distinct questions
         assert stats.exhausted_chunks == 5
 
+    def test_malformed_round_does_not_retire_a_chunk(self):
+        # A round of questions that cite "the passage" is dropped, but the chunk gets another round.
+        recs, stats, _ = _synth(FakeOpenAI(leaky_first=True))
+        assert len(recs) == 20
+        assert stats.questions_dropped > 0 and stats.exhausted_chunks == 0
+
+    def test_repeats_retire_a_chunk(self):
+        _, stats, _ = _synth(FakeOpenAI(questions_per_passage=2), target=50)
+        assert stats.questions_repeated > 0 and stats.exhausted_chunks == 5
+
+    def test_rejected_pairs_are_kept_with_a_reason(self):
+        _, stats, _ = _synth(FakeOpenAI(refuse_every=3, low_score_every=4))
+        reasons = {r.meta["rejected"] for r in stats.rejected}
+        assert reasons == {"filter: refusal", "judge"}
+        judged = [r for r in stats.rejected if r.meta["rejected"] == "judge"]
+        assert all(r.meta["judge"]["faithfulness"] == 2 for r in judged)
+        assert "rejected" not in stats.as_dict()
+
+    def test_question_prompt_has_no_labels_to_quote(self):
+        fake = FakeOpenAI()
+        _synth(fake)
+        prompts = [c["messages"][-1]["content"] for c, k in zip(fake.calls, _kinds(fake), strict=True)
+                   if k == "question"]
+        assert prompts and not any("passage A" in p or "passage B" in p for p in prompts)
+
     def test_avoid_list_sent_in_later_rounds(self):
         fake = FakeOpenAI(questions_per_passage=2)
         _synth(fake, target=50)

@@ -27,7 +27,11 @@ _HEADING_RE = re.compile(r"^\s*(?:#+\s*[^\n]*\n|\*\*[^*\n]+\*\*\s*\n)")
 _LABEL_RE = re.compile(r"^\s*(?:\d+[.)]\s*|[-*]\s*|(?:question|q)\s*\d*\s*[:.-]\s*)", re.IGNORECASE)
 # Questions must stand alone: a trainee never sees "passage B" or "the text above".
 _SOURCE_REF_RE = re.compile(
-    r"\bpassages? [AB]\b|\b(?:the|this|that|above|given|provided|following|preceding) (?:passage|excerpt|context)\b"
+    r"\b(?:source )?passages? [AB]\b|\bsource passage\b"
+    r"|\b(?:the|this|that|above|given|provided|following|preceding) (?:passage|excerpt|context)s?\b"
+    r"|\bthe (?:first|second|third|last|next|previous|following|above|earlier|other) "
+    r"(?:sentence|paragraph|example|excerpt|passage|section)s?\b"
+    r"|\bboth excerpts\b"
     r"|\b(?:according to|based on|in|from) the (?:given |above |provided |following )?(?:text|document|source)\b",
     re.IGNORECASE,
 )

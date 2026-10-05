@@ -139,6 +139,7 @@ class TestRunDirectory:
         assert m["usage"]["teacher:gpt-4o-mini"]["requests"] > 0
         assert m["usage"]["judge:gpt-4o-mini"]["requests"] > 0
         assert m["quality"]["grade"] == result.quality["grade"]
+        assert run.rejected.is_file()  # empty here: the fake never misbehaves
 
     def test_secrets_never_written(self, source):
         secret = "sk-this-must-never-be-written-anywhere"

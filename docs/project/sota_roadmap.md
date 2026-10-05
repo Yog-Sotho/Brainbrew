@@ -140,7 +140,8 @@ Each of these is supported by current practice (see Sources in the audit):
 
 - llama-cpp-python's server rejects `response_format: json_schema` with **500**, not 400/422, so the fallback never triggered and every structured call failed. A 5xx that names `response_format` now degrades too; any other 5xx is still an outage.
 - Calls waiting on the concurrency limit had already read the response-format capability, so after the first call learned that `json_schema` is unsupported, every queued call still tried it, paying the SDK's retry backoff each time (55 failed requests where 5 were needed). The capability is now read after a slot is free.
-- A 3B teacher writes questions such as "…in the text following passage B?", which mean nothing without the prompt. Such questions are now dropped.
+- A 3B teacher copies the prompt's labels into its questions ("In the first example in source passage A…", "…according to the second excerpt"): 60 % of questions were dropped in the first local gate run, and a chunk whose whole round was dropped was retired for good, so 8 of 9 chunks stopped early and the run reached 5/10 pairs. The excerpts are now unlabelled, the prompt explains that the reader never sees them (with template examples, since a literal example was copied verbatim), the filter catches ordinal references ("the second passage"), and a chunk is retired only when it yields nothing but repeats or two empty rounds in a row. On the same chunks, kept questions went from 1/11 to 8–9/10.
+- Rejected pairs were invisible, so a 74 % judge rejection rate could not be inspected. They are now written to `rejected.jsonl` in the run folder with the reason (filter or judge scores).
 - `SemanticDeduplicator` defines `__len__`, so an empty one was falsy and `if self.semantic` skipped semantic dedup entirely. Explicit `is not None` checks; a test asserts paraphrases are actually removed.
 
 ## Phase 3: Operability (about 1 week)

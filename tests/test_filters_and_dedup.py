@@ -41,6 +41,11 @@ class TestCleanQuestion:
         "What is the main difference between identifying an audience and identifying the day of a place in "
         "the comparison made in the text following passage B?",
         "According to the passage, why do plants need light?",
+        "In the first example in source passage A, what difficulty did the author face?",
+        "What does the second sentence say about commas?",
+        # Seen with the unlabelled prompt: the model numbers the excerpts itself.
+        "What is the main cause of distrust, as mentioned in the first excerpt?",
+        "How does the second passage view the adjustment of clashing interests compared to the first?",
         "Based on the text, when is a comma required?",
     ])
     def test_drops(self, raw):

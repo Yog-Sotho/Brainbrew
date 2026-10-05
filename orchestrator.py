@@ -218,6 +218,7 @@ def _run(
 
     records, stats, usage = asyncio.run(_generate(cfg, chunks, _gen_progress, make_client))
     write_records(run.raw, records)
+    write_records(run.rejected, stats.rejected)
     counts: dict[str, int] = {"chunks": len(chunks), "generated": len(records)}
     run.update_manifest(counts=counts, generation=stats.as_dict(), usage=usage)
     logger.info("Generation finished", **{k: v for k, v in stats.as_dict().items() if k != "answers_filtered"})

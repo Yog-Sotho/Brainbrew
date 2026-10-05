@@ -23,8 +23,8 @@ from pipeline.prompts import (
     QUESTION_TYPES,
 )
 
-_PASSAGE_RE = re.compile(r"Source passage(?: A)?:\n<<<\n(?P<p>.*?)\n>>>", re.DOTALL)
-_K_RE = re.compile(r"Write (?P<k>\d+) questions")
+_PASSAGE_RE = re.compile(r"(?:Source passage|Document excerpt):\n<<<\n(?P<p>.*?)\n>>>", re.DOTALL)
+_K_RE = re.compile(r"Write (?P<k>\d+) (?:self-contained )?questions")
 _QUESTION_RE = re.compile(r"Question: (?P<q>.*?)(?:\n\n|$)", re.DOTALL)
 _WORD_RE = re.compile(r"[A-Za-z]{6,}")
 
@@ -63,7 +63,8 @@ class FakeOpenAI:
     low_score_every: int = 0              # every Nth judge call scores 2
     rate_limit_first: bool = False        # first request gets a 429
     auth_error: bool = False              # every request gets a 401
-    questions_per_passage: int | None = None  # cap distinct questions per passage
+    questions_per_passage: int | None = None  # cap distinct questions per passage; then repeats
+    leaky_first: bool = False             # first round per passage: questions that cite "the passage"
     calls: list[dict[str, Any]] = field(default_factory=list)
     _counters: dict[str, int] = field(default_factory=dict)
     _asked: dict[str, int] = field(default_factory=dict)
@@ -143,10 +144,15 @@ class FakeOpenAI:
         passage = _PASSAGE_RE.search(user).group("p")
         k = int(_K_RE.search(user).group("k"))
         key = _tag(passage)
+        if self.leaky_first and self._bump(f"leaky:{key}") == 1:
+            return json.dumps({"questions": [
+                {"type": "factual", "question": f"In source passage A, what is point {j}?"} for j in range(k)
+            ]})
         start = self._asked.get(key, 0)
         stop = start + k
-        if self.questions_per_passage is not None:
-            stop = min(stop, self.questions_per_passage)
+        if self.questions_per_passage is not None and stop > self.questions_per_passage:
+            # Like real models: once out of material, repeat earlier questions.
+            start, stop = 0, min(k, self.questions_per_passage)
         words = _WORD_RE.findall(passage) or ["topic"]
         questions = []
         for j in range(start, stop):

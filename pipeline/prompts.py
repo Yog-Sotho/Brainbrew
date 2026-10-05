@@ -43,11 +43,16 @@ class JudgeScores(BaseModel):
 
 QUESTION_SYSTEM = (
     "You write questions for a training dataset that teaches a language model the "
-    "knowledge in a source document. Every question must be fully answerable from "
-    "the source passage alone, must make sense without seeing the passage (never say "
-    "'the passage', 'the text', 'the author' or 'according to'), and must ask about "
-    "substance, not formatting or page layout. Questions must be different from each "
-    "other and from any listed as already asked."
+    "knowledge in a document. The person answering will never see the document, so "
+    "every question must stand on its own: name the concept, rule, person or event it "
+    "is about, and never refer to the excerpt itself ('the passage', 'the text', 'the "
+    "excerpt', 'the author', 'the second sentence', 'the first example', 'this "
+    "context', 'according to'). Every question must be answerable from the excerpt "
+    "alone and ask about substance (ideas, facts, reasons, procedures), not wording, "
+    "sentence counts or layout.\n"
+    "Good shape: 'Why does <named concept> require <named condition>?'\n"
+    "Bad shape: 'According to the passage, what does the first example show?'\n"
+    "Questions must be different from each other and from any listed as already asked."
 )
 
 
@@ -58,13 +63,15 @@ def question_messages(
     next_passage: str | None = None,
     avoid: list[str] | None = None,
 ) -> list[dict[str, str]]:
-    parts = [f"Source passage A:\n<<<\n{passage}\n>>>"]
-    if next_passage and "multi-hop" in types:
-        parts.append(f"Source passage B (the text that follows A):\n<<<\n{next_passage}\n>>>")
-    wanted = ", ".join(t for t in types if t != "multi-hop" or next_passage)
+    # Unlabelled excerpts: labels such as "passage A" end up quoted in the questions.
+    parts = [f"Document excerpt:\n<<<\n{passage}\n>>>"]
+    multi_hop = bool(next_passage) and "multi-hop" in types
+    if multi_hop:
+        parts.append(f"The excerpt that follows it:\n<<<\n{next_passage}\n>>>")
+    wanted = ", ".join(t for t in types if t != "multi-hop" or multi_hop)
     parts.append(
-        f"Write {k} questions. Spread them across these types: {wanted}. "
-        + ("A multi-hop question must need facts from both passage A and passage B. " if next_passage else "")
+        f"Write {k} self-contained questions. Spread them across these types: {wanted}. "
+        + ("A multi-hop question must combine facts from both excerpts. " if multi_hop else "")
         + "Return JSON: {\"questions\": [{\"type\": ..., \"question\": ...}]}."
     )
     if avoid:
