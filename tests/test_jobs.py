@@ -187,6 +187,29 @@ class TestGpuSlot:
             t.join(10)
         assert order == ["first in", "first out", "second in"]
 
+    def test_excludes_other_processes(self, tmp_path):
+        # The web server and the CLI are separate processes; the slot must exclude across them.
+        import subprocess
+        import sys
+
+        marker = tmp_path / "held"
+        code = (
+            "import time, pathlib, sys\n"
+            "from pipeline.gpu import gpu_slot\n"
+            "with gpu_slot():\n"
+            "    pathlib.Path(sys.argv[1]).write_text(str(time.time()))\n"
+            "    time.sleep(1.0)\n"
+        )
+        env = {**os.environ, "BRAINBREW_RUNS_DIR": str(runs_base())}
+        child = subprocess.Popen([sys.executable, "-c", code, str(marker)], env=env,
+                                 cwd=Path(__file__).resolve().parent.parent)
+        _wait(marker.exists, timeout=30)
+        start = time.time()
+        with gpu_slot(poll_s=0.05):
+            waited = time.time() - start
+        assert child.wait(timeout=30) == 0
+        assert waited > 0.5, "the slot was entered while another process held it"
+
     def test_cancel_while_waiting(self):
         cancel = threading.Event()
         held = threading.Event()
@@ -221,6 +244,16 @@ class TestLogs:
         assert all(line["run_id"] == "run-1" and "timestamp" in line for line in lines)
         err = capsys.readouterr().err.strip().splitlines()
         assert json.loads(err[-1])["event"] == "after the run"
+        logs.configure_logging(force=True)
+
+    def test_quiet_console_still_fills_the_run_log(self, tmp_path, capsys):
+        # The CLI asks for WARNING on the console; the run log must still get INFO lines.
+        logs.configure_logging(level="WARNING", fmt="json", force=True)
+        log_path = tmp_path / "run.log"
+        with logs.run_log(log_path, "run-2"):
+            logs.structlog.get_logger("brainbrew").info("progress note")
+        assert json.loads(log_path.read_text(encoding="utf-8"))["event"] == "progress note"
+        assert "progress note" not in capsys.readouterr().err
         logs.configure_logging(force=True)
 
     def test_configure_is_idempotent(self):
