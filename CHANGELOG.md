@@ -17,8 +17,10 @@ comments. The phases refer to
 - `reasoning_effort` setting (config, CLI config files, `bench/run_bench.py
   --reasoning-effort`): `none` turns thinking off where the server allows it, so
   thinking does not use up the answer's token budget.
-- A server that rejects the `seed` field gets requests without it (logged once),
-  instead of failing every request.
+- A server that rejects the `seed` field gets requests without it, and one that
+  rejects system messages (Gemma on Google's API) gets their text at the start
+  of the user turn. Each is learned once and logged, instead of failing every
+  request.
 - Rate limits that name their wait are followed: a short one (Gemini's "retry in
   36s") becomes the retry delay, and one of hours (a used-up daily quota) stops
   the run at once instead of retrying every request.

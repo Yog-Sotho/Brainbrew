@@ -403,3 +403,48 @@ class TestRetryDelays:
 
         attempts, exc = self._attempts("Quota exceeded, limit: 20. Please retry in 9h4m18s.", max_retries=4)
         assert attempts == 1 and is_fatal_error(exc)
+
+
+class TestSystemMessages:
+    """Servers that reject system messages (Gemma on Google's API) get them in the user turn."""
+
+    def test_fold(self):
+        from engine.client import fold_system_messages
+
+        msgs = [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello"}, {"role": "user", "content": "More"}]
+        assert fold_system_messages(msgs) == [{"role": "user", "content": "Be brief.\n\nHi"},
+                                              {"role": "assistant", "content": "Hello"},
+                                              {"role": "user", "content": "More"}]
+        assert msgs[1]["content"] == "Hi"   # the caller's messages are not changed
+        assert fold_system_messages([{"role": "system", "content": "S"}]) == [{"role": "user", "content": "S"}]
+
+    def test_rejection_is_learned_once(self):
+        import asyncio
+        import json
+
+        bodies = []
+
+        def reply(request):
+            body = json.loads(request.content)
+            bodies.append(body)
+            if any(m["role"] == "system" for m in body["messages"]):
+                return httpx2.Response(400, json=[{"error": {
+                    "code": 400, "message": "Developer instruction is not enabled for models/gemma-4-31b-it",
+                    "status": "INVALID_ARGUMENT"}}])
+            return httpx2.Response(200, json={
+                "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+                "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
+
+        settings = EndpointSettings(model="gemma", base_url="http://x/v1", max_retries=0, seed=3)
+        client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+        msgs = [{"role": "system", "content": "Rules."}, {"role": "user", "content": "Q"}]
+
+        async def run():
+            return [await client.chat(msgs), await client.chat(msgs)]
+
+        assert asyncio.run(run()) == ["ok", "ok"]
+        assert [any(m["role"] == "system" for m in b["messages"]) for b in bodies] == [True, False, False]
+        assert bodies[-1]["messages"] == [{"role": "user", "content": "Rules.\n\nQ"}]
+        assert all(b.get("seed") == 3 for b in bodies)   # the seed was not dropped by mistake

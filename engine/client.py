@@ -123,6 +123,25 @@ async def _tune_rate_limit_retries(response: httpx2.Response) -> None:
         response.headers["retry-after"] = str(math.ceil(delay))
 
 
+_SYSTEM_REJECTED_RE = re.compile(
+    r"developer instruction|system (?:instruction|role|message|prompt)s?\b.{0,40}(?:not|unsupported|enabled)",
+    re.IGNORECASE,
+)
+
+
+def fold_system_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """The same conversation without system messages: their text leads the first user turn."""
+    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+    rest = [dict(m) for m in messages if m["role"] != "system"]
+    if not system:
+        return rest
+    for m in rest:
+        if m["role"] == "user":
+            m["content"] = f"{system}\n\n{m['content']}"
+            return rest
+    return [{"role": "user", "content": system}, *rest]
+
+
 class StructuredOutputError(RuntimeError):
     """The model did not return valid JSON for the requested schema."""
 
@@ -172,6 +191,7 @@ class _Capabilities:
 
     response_format: str = "json_schema"  # -> "json_object" -> "prompt"
     send_seed: bool = True                 # False once the server rejected the seed field
+    send_system: bool = True               # False once it rejected system messages (folded into the user turn)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -255,6 +275,8 @@ class ChatClient:
         response_format: dict[str, Any] | None,
     ) -> str:
         """One request; the caller holds the concurrency semaphore."""
+        if not self._caps.send_system:
+            messages = fold_system_messages(messages)
         kwargs: dict[str, Any] = {
             "model": self.settings.model,
             "messages": messages,
@@ -268,19 +290,30 @@ class ChatClient:
         send_seed = self.settings.seed is not None and self._caps.send_seed
         if send_seed:
             kwargs["seed"] = self.settings.seed
-        try:
-            completion = await self._client.chat.completions.create(**kwargs)
-        except (BadRequestError, UnprocessableEntityError) as exc:
-            # Some OpenAI-compatible servers reject the seed field. Sample without it
-            # rather than failing every request (handled here, so the structured-output
-            # fallback does not mistake it for an unsupported response_format).
-            if not send_seed or "seed" not in str(exc).lower():
-                raise
-            if self._caps.send_seed:
-                self._caps.send_seed = False
-                logger.warning("The server rejected the seed; sampling without one", model=self.settings.model)
-            kwargs.pop("seed")
-            completion = await self._client.chat.completions.create(**kwargs)
+        while True:
+            try:
+                completion = await self._client.chat.completions.create(**kwargs)
+                break
+            except (BadRequestError, UnprocessableEntityError) as exc:
+                # Some OpenAI-compatible servers reject the seed field or system
+                # messages (Gemma on Google's API). Adapt once and remember, rather than
+                # failing every request. Handled here, so the structured-output fallback
+                # does not mistake it for an unsupported response_format.
+                text = str(exc)
+                if "seed" in kwargs and "seed" in text.lower():
+                    if self._caps.send_seed:
+                        self._caps.send_seed = False
+                        logger.warning("The server rejected the seed; sampling without one",
+                                       model=self.settings.model)
+                    kwargs.pop("seed")
+                elif _SYSTEM_REJECTED_RE.search(text) and any(m["role"] == "system" for m in kwargs["messages"]):
+                    if self._caps.send_system:
+                        self._caps.send_system = False
+                        logger.warning("The server rejected system messages; sending them in the user turn",
+                                       model=self.settings.model)
+                    kwargs["messages"] = fold_system_messages(kwargs["messages"])
+                else:
+                    raise
         self.usage.add(completion.usage)
         if not completion.choices:
             return ""

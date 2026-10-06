@@ -90,8 +90,9 @@ jobs:
           esac
           model="${BENCH_MODEL:-$model}"
           # Gemini 2.5 can turn thinking off; Gemini 3 and later only go down to "minimal".
+          # Other models on Google's API (Gemma) get no thinking setting.
           if [ "$BENCH_PROVIDER" = gemini ]; then
-            case "$model" in gemini-2.5*) effort="none" ;; *) effort="minimal" ;; esac
+            case "$model" in gemini-2.5*) effort="none" ;; gemini-*) effort="minimal" ;; *) effort="" ;; esac
           fi
           if [ -z "$model" ]; then
             echo "::error title=No model::Set the BENCH_MODEL repository variable or the workflow's model input."
