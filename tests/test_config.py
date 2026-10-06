@@ -32,7 +32,7 @@ class TestQualityMode:
         assert QualityMode("balanced") is QualityMode.BALANCED
 
     def test_invalid_value_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="turbo"):
             QualityMode("turbo")
 
 # A local OpenAI-compatible server needs no API key, so field tests stay focused.
@@ -53,7 +53,7 @@ class TestOutputFormat:
         assert OutputFormat("sharegpt") is OutputFormat.SHAREGPT
 
     def test_invalid_value_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="invalid_format"):
             OutputFormat("invalid_format")
 
 
@@ -228,7 +228,7 @@ class TestDistillationConfigInvalid:
             DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", concurrency=0)
 
 
-# ── FIX C-01: safe_dict() ────────────────────────────────────────────────────
+# ── safe_dict() ──────────────────────────────────────────────────────────────
 
 class TestSafeDict:
 
@@ -258,11 +258,11 @@ class TestSafeDict:
             pytest.fail(f"safe_dict() is not JSON-serialisable: {e}")
 
 
-# ── FIX C-02: API key never leaks via repr/str ──────────────────────────────
+# ── API key never leaks via repr/str ────────────────────────────────────────
 
 class TestApiKeyNeverLeaks:
 
-    @pytest.fixture()
+    @pytest.fixture
     def cfg_with_key(self):
         return DistillationConfig(teacher_model="gpt-4o", api_key="sk-supersecret-key-12345")
 
@@ -285,7 +285,7 @@ class TestApiKeyNeverLeaks:
 
 # ── Parametrized quality mode round-trips ────────────────────────────────────
 
-@pytest.mark.parametrize("mode_str,expected", [
+@pytest.mark.parametrize(("mode_str", "expected"), [
     ("fast", QualityMode.FAST),
     ("balanced", QualityMode.BALANCED),
     ("research", QualityMode.RESEARCH),
@@ -323,7 +323,7 @@ class TestCrossFieldRules:
         with pytest.raises(ValidationError, match="hf_repo is required"):
             DistillationConfig(base_url=LOCAL_URL, teacher_model="m", publish_dataset=True, hf_token="hf_x")
 
-    @pytest.mark.parametrize("field,value", [
+    @pytest.mark.parametrize(("field", "value"), [
         ("max_new_tokens", 32769), ("concurrency", 65), ("lora_rank", 257),
         ("request_timeout", 1801), ("judge_threshold", 6), ("dataset_size", 50_001),
     ])
@@ -342,7 +342,7 @@ def test_check_hf_repo_name_shared_rule():
 
 class TestEndpointUrl:
 
-    @pytest.mark.parametrize("url,expected", [
+    @pytest.mark.parametrize(("url", "expected"), [
         ("http://localhost:8000/v1", "http://localhost:8000/v1"),
         ("https://api.example.com/v1/", "https://api.example.com/v1"),
         ("  http://vllm:8000/v1  ", "http://vllm:8000/v1"),

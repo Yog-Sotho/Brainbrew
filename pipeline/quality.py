@@ -1,5 +1,5 @@
 """
-Dataset quality report (Enhancement 10).
+Dataset quality report.
 
 Scores canonical records, so a dataset gets the same grade whichever export
 format the user picked.
@@ -9,8 +9,6 @@ from __future__ import annotations
 from typing import TypedDict
 
 from pipeline.records import Record
-
-GRADES: tuple[str, ...] = ("SUPER", "GOOD", "NORMAL", "BAD", "DISASTER")
 
 _QUALITY_THRESHOLDS: dict[str, dict[str, float]] = {
     "SUPER":  {"min_records": 100, "min_avg_len": 300, "min_unique_ratio": 0.95},

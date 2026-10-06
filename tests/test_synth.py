@@ -76,7 +76,7 @@ class TestTarget:
 
     def test_stops_when_source_is_exhausted(self):
         recs, stats, _ = _synth(FakeOpenAI(questions_per_passage=2), target=50)
-        assert len(recs) == 10  # 5 chunks × 2 distinct questions
+        assert len(recs) == 10  # 5 chunks x 2 distinct questions
         assert stats.exhausted_chunks == 5
 
     def test_malformed_round_does_not_retire_a_chunk(self):
@@ -181,15 +181,35 @@ class TestFailures:
 
 class TestHelpers:
 
-    @pytest.mark.parametrize("remaining,active,acceptance,expected", [
+    @pytest.mark.parametrize(("remaining", "active", "acceptance", "expected"), [
         (20, 5, 0.7, 6), (1, 5, 0.7, 1), (1000, 2, 0.5, MAX_QUESTIONS_PER_CHUNK), (0, 5, 0.7, 0), (10, 0, 0.7, 0),
     ])
     def test_questions_per_chunk(self, remaining, active, acceptance, expected):
         assert questions_per_chunk(remaining, active, acceptance) == expected
 
-    @pytest.mark.parametrize("scores,threshold,ok", [
+    @pytest.mark.parametrize(("scores", "threshold", "ok"), [
         ((5, 5, 5), 4, True), ((4, 5, 4), 4, True), ((3, 5, 5), 4, False), ((5, 9, 5), 4, False), ((2, 2, 2), 2, True),
     ])
     def test_judge_passes(self, scores, threshold, ok):
         f, h, c = scores
         assert judge_passes(JudgeScores(faithfulness=f, helpfulness=h, correctness=c, reason=""), threshold) is ok
+
+
+class TestErrorReporting:
+
+    def test_failures_are_logged_and_the_last_one_kept(self, caplog):
+        def broken(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(400, json={"error": {"message": "model 'nope' does not exist"}})
+
+        settings = EndpointSettings(model="nope", base_url="http://fake/v1", api_key="k", max_retries=0)
+        client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(broken)))
+        from pipeline.logs import configure_logging
+
+        configure_logging(force=True)  # route structlog through stdlib, as the app does
+        with caplog.at_level("WARNING"):
+            recs, stats = asyncio.run(synthesize(CHUNKS, [client], SynthSettings(target=5, max_rounds=2)))
+        assert recs == [] and stats.errors >= 5
+        assert stats.last_error is not None and "does not exist" in stats.last_error
+        failures = [r for r in caplog.records if "Request failed" in r.getMessage()]
+        assert len(failures) == 5  # the first few in full, the rest only counted
+        assert any("only counted" in r.getMessage() for r in caplog.records)

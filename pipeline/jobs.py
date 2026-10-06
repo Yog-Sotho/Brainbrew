@@ -29,6 +29,14 @@ from pipeline.runs import ACTIVE_STATES, RunCancelled, RunDir, utc_now
 logger = structlog.get_logger(__name__)
 
 MAX_JOBS_ENV = "BRAINBREW_MAX_JOBS"
+MAX_FINISHED_KEPT = 200  # finished jobs remembered in memory; their manifests stay on disk
+
+
+def max_jobs_from_env() -> int:
+    raw = os.getenv(MAX_JOBS_ENV, "2").strip()
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValueError(f"{MAX_JOBS_ENV} must be a positive whole number, got {raw!r}.")
+    return int(raw)
 
 
 @dataclass
@@ -69,7 +77,7 @@ class JobRunner:
     """A small thread pool for runs. One instance per server process."""
 
     def __init__(self, max_jobs: int | None = None, runner: Runner | None = None) -> None:
-        self.max_jobs = max_jobs or int(os.getenv(MAX_JOBS_ENV, "2"))
+        self.max_jobs = max_jobs or max_jobs_from_env()
         self._executor = ThreadPoolExecutor(max_workers=self.max_jobs, thread_name_prefix="brainbrew-run")
         self._runner = runner
         self._jobs: dict[str, Job] = {}
@@ -81,6 +89,7 @@ class JobRunner:
         run.update_manifest(status="queued", queued_at=utc_now(), pid=os.getpid(),
                             host=socket.gethostname(), **({"owner": owner} if owner else {}))
         with self._lock:
+            self._forget_old_jobs()
             self._jobs[run.run_id] = job
         job.future = self._executor.submit(self._execute, job, cfg)
         logger.info("Run queued", run_id=run.run_id)
@@ -102,6 +111,12 @@ class JobRunner:
             logger.warning("Run failed", run_id=job.run_id, error=job.error)
         else:
             job.status, job.progress, job.stage = "succeeded", 100, "Done"
+
+    def _forget_old_jobs(self) -> None:
+        """Keep memory bounded on a long-running server (caller holds the lock)."""
+        finished = [rid for rid, j in self._jobs.items() if not j.active]
+        for rid in finished[: max(0, len(finished) - MAX_FINISHED_KEPT)]:
+            del self._jobs[rid]
 
     def get(self, run_id: str) -> Job | None:
         with self._lock:
@@ -185,4 +200,24 @@ def get_runner() -> JobRunner:
     with _runner_lock:
         if _runner is None:
             _runner = JobRunner()
+            _register_shutdown()
         return _runner
+
+
+def _cancel_on_exit() -> None:
+    """At interpreter shutdown, cancel running jobs so they end as "cancelled"."""
+    if _runner is not None:
+        _runner.shutdown(wait=False)
+
+
+def _register_shutdown() -> None:
+    # Python joins worker threads at exit *before* ordinary atexit handlers run,
+    # so a plain atexit hook would wait for every run to finish. threading's own
+    # exit hooks run first (concurrent.futures uses the same mechanism).
+    register = getattr(threading, "_register_atexit", None)
+    if register is not None:
+        register(_cancel_on_exit)
+    else:  # pragma: no cover - other Python implementations
+        import atexit
+
+        atexit.register(_cancel_on_exit)

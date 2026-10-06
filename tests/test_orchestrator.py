@@ -32,7 +32,7 @@ TOPICS = [
 ]
 
 
-@pytest.fixture()
+@pytest.fixture
 def source(tmp_path: Path) -> Path:
     p = tmp_path / "source.txt"
     p.write_text("\n\n".join((t + " ") * 8 for t in TOPICS), encoding="utf-8")
@@ -88,7 +88,7 @@ class TestPipelineContract:
             reports[fmt] = (result.record_count, result.quality)
         assert len({json.dumps(r, sort_keys=True) for r in reports.values()}) == 1
 
-    @pytest.mark.parametrize("mode,judged,evolved", [
+    @pytest.mark.parametrize(("mode", "judged", "evolved"), [
         (QualityMode.FAST, False, False),
         (QualityMode.BALANCED, True, False),
         (QualityMode.RESEARCH, True, True),
@@ -158,10 +158,10 @@ class TestRunDirectory:
         assert any(line["event"] == "Finished" for line in lines)
         assert secret not in result.run.log.read_text(encoding="utf-8")
 
-    def test_manifest(self, source, _isolated_runs_dir):
+    def test_manifest(self, source, isolated_runs_dir):
         result = _run(_cfg(sanitize_dataset=True), source)
         run = open_run(result.run.run_id)
-        assert run.root.parent == _isolated_runs_dir
+        assert run.root.parent == isolated_runs_dir
         m = run.read_manifest()
         assert m["status"] == "succeeded"
         assert m["counts"]["generated"] == 15 and m["counts"]["chunks"] >= 1
@@ -178,12 +178,12 @@ class TestRunDirectory:
             if path.is_file():
                 assert secret not in path.read_text(encoding="utf-8", errors="ignore"), path
 
-    def test_failed_run_is_marked(self, source, _isolated_runs_dir):
+    def test_failed_run_is_marked(self, source, isolated_runs_dir):
         from openai import AuthenticationError
 
         with pytest.raises(AuthenticationError):
             _run(_cfg(), source, FakeOpenAI(auth_error=True))
-        (root,) = _isolated_runs_dir.iterdir()
+        (root,) = isolated_runs_dir.iterdir()
         manifest = open_run(root.name).read_manifest()
         assert manifest["status"] == "failed" and "bad key" in manifest["error"]
 

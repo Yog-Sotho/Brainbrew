@@ -1,5 +1,5 @@
 """
-Brainbrew exporter — deduplicates canonical records and formats them for training.
+Brainbrew exporter: formats canonical records for training.
 
 Formatting happens only here, at the very end of the pipeline:
   - Alpaca:   {"instruction": ..., "input": ..., "output": ...}
@@ -7,41 +7,16 @@ Formatting happens only here, at the very end of the pipeline:
   - ChatML:   {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
   - OpenAI:   {"messages": [{"role": "system", ...}, {"role": "user", ...}, ...]}
 
-Also provides exact-match and near-duplicate deduplication (Enhancement 5).
+Deduplication lives in pipeline/dedup.py.
 """
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from pipeline.dedup import deduplicate
-from pipeline.records import Record
-
-logger = logging.getLogger(__name__)
-
-
-# ── Enhancement 5: Deduplication (MinHash-LSH, pipeline/dedup.py) ───────────
-
-def deduplicate_records(
-    records: list[Record],
-    similarity_threshold: float = 0.85,
-) -> list[Record]:
-    """Remove exact and near-duplicate records, keeping the first of each group.
-
-    Near-duplicates are found with MinHash + LSH over the normalised
-    instruction and output, so the cost grows roughly linearly with the data.
-    """
-    if not records:
-        return records
-    unique = deduplicate(records, threshold=similarity_threshold)
-    removed = len(records) - len(unique)
-    if removed:
-        logger.info("Deduplication removed %d records (%d → %d)", removed, len(records), len(unique))
-    return unique
-
+from pipeline.records import Record, jsonl_line
 
 # ── Format converters ────────────────────────────────────────────────────────
 
@@ -109,6 +84,6 @@ def export_dataset(
     count = 0
     with open(output_path, "w", encoding="utf-8") as fout:
         for rec in records:
-            fout.write(json.dumps(formatter(rec), ensure_ascii=False) + "\n")
+            fout.write(jsonl_line(json.dumps(formatter(rec), ensure_ascii=False)))
             count += 1
     return count

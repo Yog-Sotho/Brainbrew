@@ -1,6 +1,6 @@
 # Brainbrew: Roadmap from 3/10 to ≥ 8/10
 
-Source: [`codebase_audit.md`](./codebase_audit.md) (2026-10-05). The phases are ordered by dependency. Each phase ends with acceptance criteria that can be checked mechanically. **Do not start a later phase until the current phase's gate passes.**
+Source: [`codebase_audit_baseline.md`](./codebase_audit_baseline.md) (2026-10-05; the current audit is [`codebase_audit.md`](./codebase_audit.md)). The phases are ordered by dependency. Each phase ends with acceptance criteria that can be checked mechanically. **Do not start a later phase until the current phase's gate passes.**
 
 ## Target scores
 
@@ -182,6 +182,26 @@ Each of these is supported by current practice (see Sources in the audit):
 - Remove the change-log comments (`FIX C-xx`, `Enhancement N`) and move them to `CHANGELOG.md`.
 
 **Gate:** a re-run of the codebase audit scores **≥ 8.0 overall with no CRITICAL or HIGH findings open**.
+
+### Phase 4 status (2026-10-06): done
+
+| # | Result |
+|---|---|
+| 4.1 | `mypy --strict` on `config.py`, `engine/` and `pipeline/` in CI and pre-commit. ruff adds `S`, `PT` and `RUF`; each remaining `noqa` states its reason. `.pre-commit-config.yaml` runs the locked tools (`uv run --locked`), checks the lock and refuses `.env` and `secrets.toml`. |
+| 4.2 | `tests/test_properties.py` (Hypothesis) covers chunk bounds and coverage, exact formatting, export and record round trips, dedup order and idempotence, sanitizer and redaction idempotence. It found that U+0085, U+2028 and U+2029 split JSONL records; both writers now escape them. mutmut (`[tool.mutmut]`) on the sanitizer, PII and dedup: 78% → 87.5% after `tests/test_mutation_gaps.py`. |
+| 4.3 | CI builds CycloneDX SBOMs and scans the image with Trivy (HIGH/CRITICAL, fixable). The scan found 8 issues in the old base image, which was bumped. `release.yml` builds on `v*` tags, checks the tag against the version, attaches SBOMs, signs every file with Sigstore (keyless), verifies the signatures against the workflow identity and publishes the release with notes from the changelog. |
+| 4.4 | The 13 PDFs are replaced by Markdown pages in `docs/` with an MkDocs site, built with `--strict` in CI. `tests/test_docs.py` keeps the configuration table complete, keeps the navigation in sync and keeps binaries out. |
+| 4.5 | `CHANGELOG.md` (Keep a Changelog) holds the change history; the `FIX C-xx` and `Enhancement N` comments are gone from the code. |
+
+**Gate: met.** The re-run audit ([codebase_audit.md](./codebase_audit.md)) scores **8.3 / 10** (baseline 3.2) with no CRITICAL, HIGH or MEDIUM findings open. It raised and fixed five issues before scoring:
+
+- an SSRF path to cloud metadata services;
+- the server's HF token being usable for any repo under login;
+- custom endpoints being on by default on shared servers;
+- silent request failures;
+- jobs blocking shutdown.
+
+It also removed three unused symbols. Four LOW findings remain, listed with actions in the report.
 
 ## Suggested PR breakdown
 

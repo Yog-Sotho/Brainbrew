@@ -74,6 +74,13 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.13",
     "mypy>=1.18",
+    "hypothesis>=6.140",
+    "mutmut>=3.3",
+]
+# Documentation site: `uv run --group docs mkdocs serve`
+docs = [
+    "mkdocs>=1.6,<2",  # MkDocs 2 drops the plugin and theme system Material needs
+    "mkdocs-material>=9.6",
 ]
 
 [project.urls]
@@ -108,6 +115,21 @@ python_functions = ["test_*"]
 source = ["."]
 omit = ["tests/*", "old/*", ".venv/*", "bench/make_fixtures.py"]
 
+# ── mutmut (mutation testing: `uv run mutmut run`, then `uv run mutmut results`) ──
+
+[tool.mutmut]
+paths_to_mutate = ["pipeline/sanitizer.py", "pipeline/pii.py", "pipeline/dedup.py"]
+tests_dir = ["tests/"]
+pytest_add_cli_args_test_selection = [
+    "tests/test_sanitizer.py", "tests/test_pii.py", "tests/test_filters_and_dedup.py",
+    "tests/test_properties.py", "tests/test_mutation_gaps.py",
+]
+also_copy = [
+    "app.py", "cli.py", "config.py", "orchestrator.py",
+    "bench/", "engine/", "pages/", "pipeline/", "publish/", "training/", "ui/", "tests/", ".streamlit/",
+    "docs/", "mkdocs.yml", "CHANGELOG.md",
+]
+
 # ── mypy ─────────────────────────────────────────────────────────────────────
 
 [tool.mypy]
@@ -140,8 +162,19 @@ line-length = 100
 extend-exclude = ["old"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+# S: bandit security checks; PT: pytest style; RUF: ruff's own checks.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "S", "PT", "RUF"]
+ignore = [
+    "E501",
+    "PT018",  # composite asserts (`assert a and b`) read fine in these tests
+]
+# En dashes are deliberate typography in UI text and dataset cards.
+allowed-confusables = ["–"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, use fake credentials and start child processes on purpose.
+"tests/**" = ["S101", "S105", "S106", "S108", "S311", "S603"]
+"bench/**" = ["S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["config", "orchestrator", "pipeline", "training", "publish"]
+known-first-party = ["cli", "config", "orchestrator", "engine", "pipeline", "publish", "training", "ui"]

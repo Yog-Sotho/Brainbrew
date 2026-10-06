@@ -431,7 +431,7 @@ else
     echo -e "  Press ${BOLD}Enter${RESET} to leave blank (you can edit .env later)."
     echo ""
 
-    # FIX H-06: read API keys silently so they don't appear in terminal history
+    # Read API keys silently so they don't appear in terminal history
     read -rsp "  OpenAI API Key (sk-...): " OPENAI_KEY
     echo ""
 

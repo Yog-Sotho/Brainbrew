@@ -2,25 +2,26 @@
 tests/test_security.py
 
 Cross-cutting security tests covering:
-  S-01: API key must never appear in logs, repr, str, or serialised config.
-  S-02: Filename sanitisation must block path-traversal and shell-injection patterns.
-  M-10: HF repo name validation.
+  - the API key never appears in logs, repr, str, or serialised config;
+  - Hugging Face repo name validation;
+  - Hugging Face token handling.
+
+Uploaded file names are never used as paths (documents are read from memory),
+so there is no filename rule to test.
 """
 from __future__ import annotations
-
-import re
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# S-01 — API key containment
+# API key containment
 # ---------------------------------------------------------------------------
 
 class TestApiKeyContainment:
 
     SECRET = "sk-prod-key-abc123xyz789"  # gitleaks:allow (fake fixture value)
 
-    @pytest.fixture()
+    @pytest.fixture
     def cfg(self):
         from config import DistillationConfig
         return DistillationConfig(teacher_model="gpt-4o", api_key=self.SECRET)
@@ -69,63 +70,7 @@ LOCAL_URL = "http://localhost:8000/v1"
 
 
 # ---------------------------------------------------------------------------
-# S-02 — Filename sanitisation
-# ---------------------------------------------------------------------------
-
-_SAFE_FILENAME_RE = re.compile(r"^[\w\-. ]+$")
-
-
-class TestFilenameSanitisation:
-
-    @pytest.mark.parametrize("filename", [
-        "document.txt",
-        "my-file.pdf",
-        "report_2024.txt",
-        "My Document v2.pdf",
-        "data.PDF",
-        "file123.txt",
-        "some_long_file_name_with_underscores.pdf",
-        "file with spaces.txt",
-        "README.md",
-    ])
-    def test_safe_filename_accepted(self, filename):
-        assert _SAFE_FILENAME_RE.match(filename), (
-            f"'{filename}' should be accepted as safe but was rejected"
-        )
-
-    @pytest.mark.parametrize("filename", [
-        "../etc/passwd",
-        "../../secret.txt",
-        "/etc/passwd",
-        "file\x00name.txt",
-        "file;rm -rf /.txt",
-        "file`whoami`.txt",
-        "file$(id).txt",
-        "file|cat /etc/passwd.txt",
-        "file>output.txt",
-        "file<input.txt",
-        "file&background.txt",
-        r"C:\Windows\System32\cmd",
-        "file\ninjection.txt",
-        "file\tname.txt",
-        "file'name.txt",
-        'file"name.txt',
-    ])
-    def test_unsafe_filename_rejected(self, filename):
-        assert not _SAFE_FILENAME_RE.match(filename), (
-            f"'{filename}' should be REJECTED as unsafe but was accepted"
-        )
-
-    def test_empty_filename_rejected(self):
-        assert not _SAFE_FILENAME_RE.match("")
-
-    def test_regex_is_anchored(self):
-        dangerous = "safe_prefix/../../../etc/passwd"
-        assert not _SAFE_FILENAME_RE.match(dangerous)
-
-
-# ---------------------------------------------------------------------------
-# M-10 — HF repo name validation
+# HF repo name validation
 # ---------------------------------------------------------------------------
 
 class TestHfRepoNameValidation:
@@ -185,7 +130,7 @@ class TestCombinedSecurityInvariants:
 
 
 # ---------------------------------------------------------------------------
-# S-03 — HF Token and Repo Name security checks
+# HF token and repo name checks
 # ---------------------------------------------------------------------------
 
 class TestHfTokenAndRepoSecurity:
@@ -345,3 +290,44 @@ class TestInputValidationSecurity:
 
         with pytest.raises(ValueError, match="Invalid run id"):
             open_run(run_id)
+
+
+# ---------------------------------------------------------------------------
+# Endpoint URLs cannot reach cloud metadata services (SSRF)
+# ---------------------------------------------------------------------------
+
+class TestEndpointSsrf:
+
+    @pytest.mark.parametrize("url", [
+        "http://169.254.169.254/latest",
+        "http://169.254.169.254:80/v1",
+        "http://2852039166/v1",            # 169.254.169.254 as one number
+        "http://0xa9fea9fe/v1",            # ... in hex
+        "http://169.254.43518/v1",         # ... in the short dotted form
+        "http://[::ffff:169.254.169.254]/v1",
+        "http://[fe80::1]/v1",
+        "http://[fd00:ec2::254]/v1",
+        "http://metadata.google.internal/v1",
+        "http://METADATA.google.internal./v1",
+        "http://metadata.azure.com/v1",
+    ])
+    def test_metadata_addresses_are_rejected(self, url):
+        from pydantic import ValidationError
+
+        from config import DistillationConfig, check_base_url
+        with pytest.raises(ValueError, match="link-local or cloud metadata"):
+            check_base_url(url)
+        with pytest.raises(ValidationError, match="link-local or cloud metadata"):
+            DistillationConfig(teacher_model="m", base_url=url)
+
+    @pytest.mark.parametrize("url", [
+        "http://localhost:8000/v1",
+        "http://127.0.0.1:11434/v1",
+        "http://10.0.0.5:8000/v1",
+        "http://vllm:8000/v1",
+        "https://api.openai.com/v1",
+        "http://[::1]:8000/v1",
+    ])
+    def test_ordinary_endpoints_are_allowed(self, url):
+        from config import check_base_url
+        assert check_base_url(url) == url

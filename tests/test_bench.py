@@ -68,7 +68,7 @@ def test_failed_run_is_reported(tmp_path):
     assert code == 1 and doc["error"].startswith("AuthenticationError")
 
 
-@pytest.mark.parametrize("questions,rate", [
+@pytest.mark.parametrize(("questions", "rate"), [
     (["What is a comma used for?", "What is a comma used for ?", "Why use active voice?"], 1 / 3),
     (["What is a comma used for?", "Why use active voice?"], 0.0),
 ])

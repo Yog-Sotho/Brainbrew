@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import structlog
 from openai import AuthenticationError, NotFoundError, PermissionDeniedError
 
 from engine import ChatClient
@@ -41,6 +42,8 @@ from pipeline.prompts import (
 )
 from pipeline.records import Record
 
+logger = structlog.get_logger(__name__)
+
 MAX_QUESTIONS_PER_CHUNK = 8
 # Rough number of pairs a ~1,600-character chunk supports before questions
 # start repeating; used for the yield estimate shown before a run.
@@ -48,6 +51,7 @@ PAIRS_PER_CHUNK_ESTIMATE = 6
 MAX_ROUNDS = 4
 AVOID_LIST_SIZE = 40
 MAX_REJECTED_KEPT = 1000
+ERRORS_LOGGED = 5  # failed requests logged in full; later ones are only counted
 
 # Errors that no retry or other chunk can fix: stop the whole run.
 FATAL_ERRORS = (AuthenticationError, PermissionDeniedError, NotFoundError)
@@ -69,6 +73,7 @@ class SynthStats:
     duplicates: int = 0
     semantic_duplicates: int = 0
     errors: int = 0
+    last_error: str | None = None
     accepted: int = 0
     exhausted_chunks: int = 0
 
@@ -145,8 +150,8 @@ class _Run:
             )
         except FATAL_ERRORS:
             raise
-        except Exception:
-            self.stats.errors += 1
+        except Exception as exc:
+            self._error("questions", exc)
             return
 
         seen = {normalise(q) for q in self.asked[i]}
@@ -212,8 +217,8 @@ class _Run:
                     return
         except FATAL_ERRORS:
             raise
-        except Exception:  # StructuredOutputError, timeouts after retries, 4xx/5xx
-            self.stats.errors += 1
+        except Exception as exc:  # StructuredOutputError, timeouts after retries, 4xx/5xx
+            self._error("pair", exc)
             return
 
         rec = Record(
@@ -229,6 +234,15 @@ class _Run:
             },
         )
         self.candidates.append(((rnd, i, n), rec))
+
+    def _error(self, step: str, exc: Exception) -> None:
+        """Count a failed request; log the first few in full and remember the last one."""
+        self.stats.errors += 1
+        self.stats.last_error = f"{type(exc).__name__}: {exc}"[:500]
+        if self.stats.errors <= ERRORS_LOGGED:
+            logger.warning("Request failed", step=step, error=self.stats.last_error)
+        elif self.stats.errors == ERRORS_LOGGED + 1:
+            logger.warning("Further request failures are only counted", logged=ERRORS_LOGGED)
 
     def _reject(
         self, rnd: int, i: int, qtype: QuestionType, question: str, answer: str,

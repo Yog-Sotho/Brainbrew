@@ -19,7 +19,7 @@ SERVER_OPENAI_KEY = "sk-server-secret-must-not-leak-0123456789"
 SERVER_HF_TOKEN = "hf_server_secret_must_not_leak_0123456789"
 
 
-@pytest.fixture()
+@pytest.fixture
 def app_with_server_secrets(monkeypatch: pytest.MonkeyPatch) -> AppTest:
     monkeypatch.setenv("OPENAI_API_KEY", SERVER_OPENAI_KEY)
     monkeypatch.setenv("HF_TOKEN", SERVER_HF_TOKEN)

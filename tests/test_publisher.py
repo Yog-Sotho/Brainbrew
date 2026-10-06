@@ -16,21 +16,21 @@ import pytest
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture()
+@pytest.fixture
 def fake_dataset_path(tmp_path: Path) -> str:
     p = tmp_path / "alpaca.jsonl"
     p.write_text('{"instruction": "Q?", "input": "", "output": "A."}\n', encoding="utf-8")
     return str(p)
 
 
-@pytest.fixture()
+@pytest.fixture
 def mock_hf_api():
     api = MagicMock(name="HfApi_instance")
     api.repo_exists.return_value = True
     return api
 
 
-@pytest.fixture()
+@pytest.fixture
 def mock_dataset():
     return MagicMock(name="DatasetDict")
 
@@ -72,7 +72,7 @@ class TestTokenValidation:
 
 
 # ---------------------------------------------------------------------------
-# M-10: Repo name validation
+# Repo name validation
 # ---------------------------------------------------------------------------
 
 class TestRepoNameValidation:
@@ -233,7 +233,7 @@ class TestDatasetCard:
                             Path(fake_dataset_path))
         assert "none (Fast mode" in card and "Rejected by the judge" not in card
 
-    @pytest.mark.parametrize("n,label", [(5, "n<1K"), (999, "n<1K"), (1000, "1K<n<10K"), (50_000, "10K<n<100K"),
+    @pytest.mark.parametrize(("n", "label"), [(5, "n<1K"), (999, "n<1K"), (1000, "1K<n<10K"), (50_000, "10K<n<100K"),
                                          (200_000, "100K<n<1M")])
     def test_size_category(self, n, label):
         from publish.dataset_card import size_category

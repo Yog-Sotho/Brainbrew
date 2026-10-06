@@ -1,0 +1,72 @@
+name: Release
+
+# Push a tag `vX.Y.Z` (matching pyproject.toml) to publish a signed release:
+# wheel, sdist and CycloneDX SBOMs, each signed keylessly with Sigstore using
+# this workflow's GitHub OIDC identity. Verify a download with:
+#   uvx sigstore verify github --cert-identity \
+#     "https://github.com/Yog-Sotho/Brainbrew/.github/workflows/release.yml@refs/tags/vX.Y.Z" \
+#     brainbrew-X.Y.Z-py3-none-any.whl
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.23"
+  PYTHON_VERSION: "3.12"
+  SIGSTORE: "sigstore==4.5.0"
+  CYCLONEDX: "cyclonedx-bom==7.5.0"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub release
+      id-token: write   # Sigstore keyless signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Tag must match the project version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "$TAG" = "v$version" || { echo "::error::tag $TAG does not match pyproject version $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build wheel and sdist
+        run: uv build -o dist
+      - name: SBOMs (CycloneDX)
+        run: |
+          uvx --from "$CYCLONEDX" cyclonedx-py requirements requirements.txt --of JSON --validate \
+            -o "dist/brainbrew-$VERSION-sbom.cdx.json"
+          uvx --from "$CYCLONEDX" cyclonedx-py requirements requirements-gpu.txt --of JSON --validate \
+            -o "dist/brainbrew-$VERSION-gpu-sbom.cdx.json"
+      - name: Sign with Sigstore
+        run: uvx "$SIGSTORE" sign dist/*
+      - name: Verify the signatures
+        env:
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
+        run: |
+          for f in dist/*.whl dist/*.tar.gz dist/*.cdx.json; do
+            uvx "$SIGSTORE" verify github --cert-identity "$IDENTITY" "$f"
+          done
+      - name: Release notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" {on=1; next}
+            on && /^## \[/ {exit}
+            on {print}
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "::error::no CHANGELOG.md section for $VERSION"; exit 1; }
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --title "Brainbrew $VERSION" --notes-file notes.md --verify-tag

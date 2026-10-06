@@ -51,12 +51,22 @@ class Record(BaseModel):
         return self.instruction
 
 
+# JSON leaves these unescaped, but str.splitlines() and many JSONL readers treat
+# them as line breaks, which would split one record across two lines.
+_LINE_BREAKS = str.maketrans({"\x85": "\\u0085", "\u2028": "\\u2028", "\u2029": "\\u2029"})
+
+
+def jsonl_line(json_text: str) -> str:
+    """One JSONL line: *json_text* with every Unicode line break escaped, plus a newline."""
+    return json_text.translate(_LINE_BREAKS) + "\n"
+
+
 def write_records(path: Path, records: Iterable[Record]) -> int:
     """Write records as canonical JSONL. Returns the number written."""
     count = 0
     with open(path, "w", encoding="utf-8") as fout:
         for rec in records:
-            fout.write(rec.model_dump_json() + "\n")
+            fout.write(jsonl_line(rec.model_dump_json()))
             count += 1
     return count
 

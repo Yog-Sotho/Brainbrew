@@ -52,7 +52,7 @@ def use_json(fmt: str | None = None) -> bool:
 class _StderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
     """Writes to whatever sys.stderr is *now*, so a replaced stderr is never stale."""
 
-    @property  # type: ignore[override]
+    @property  # type: ignore[override,unused-ignore]
     def stream(self) -> Any:
         return sys.stderr
 
