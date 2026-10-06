@@ -7,11 +7,14 @@ name: Benchmark
 # "provider" input of a manual run):
 #   openai  (default) secret OPENAI_API_KEY, model gpt-4o-mini
 #   gemini  secret GEMINI_API_KEY (free tier from Google AI Studio), model
-#           gemini-3.8-flash with minimal thinking. Free-tier requests may be used by
-#           Google to improve its products; the corpus is public domain.
+#           gemma-4-31b-it: the only model there whose free daily quota (14.4k
+#           requests) fits a run; a full run takes about three hours. Free-tier
+#           requests may be used by Google to improve its products; the corpus is
+#           public domain.
 #   custom  any OpenAI-compatible endpoint: variable BENCH_BASE_URL, variable
 #           BENCH_MODEL, optional secret BENCH_API_KEY
-# Optional variables: BENCH_MODEL (overrides the provider's model) and
+# Optional variables: BENCH_MODEL (overrides the provider's model), BENCH_JUDGE_MODEL
+# (a different model as judge, for a more independent faithfulness score) and
 # BENCH_CONCURRENCY (parallel requests; lower it for tight free-tier limits).
 # Without the provider's key the job is skipped with a notice.
 on:
@@ -46,11 +49,12 @@ env:
 jobs:
   bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
     env:
       # A defined BENCH_BASE_URL without BENCH_PROVIDER keeps meaning "custom endpoint".
       BENCH_PROVIDER: ${{ (inputs.provider != '' && inputs.provider != 'default') && inputs.provider || vars.BENCH_PROVIDER || (vars.BENCH_BASE_URL != '' && 'custom') || 'openai' }}
       BENCH_MODEL: ${{ inputs.model || vars.BENCH_MODEL }}
+      BENCH_JUDGE_MODEL: ${{ vars.BENCH_JUDGE_MODEL }}
       BENCH_SCALE: ${{ inputs.scale || '1.0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,7 +81,7 @@ jobs:
           case "$BENCH_PROVIDER" in
             openai) base="https://api.openai.com/v1"; model="gpt-4o-mini"; key_var=OPENAI_API_KEY
                     concurrency=8; key_page="https://platform.openai.com/api-keys" ;;
-            gemini) base="https://generativelanguage.googleapis.com/v1beta/openai"; model="gemini-3.8-flash"
+            gemini) base="https://generativelanguage.googleapis.com/v1beta/openai"; model="gemma-4-31b-it"
                     key_var=GEMINI_API_KEY; concurrency=2
                     key_page="https://aistudio.google.com/apikey" ;;
             custom) base="$BENCH_BASE_URL"; model=""; key_var=BENCH_API_KEY; concurrency=4; key_page=""
@@ -91,8 +95,10 @@ jobs:
           model="${BENCH_MODEL:-$model}"
           # Gemini 2.5 can turn thinking off; Gemini 3 and later only go down to "minimal".
           # Other models on Google's API (Gemma) get no thinking setting.
+          # Gemma's free tier allows far more requests per minute than Gemini Flash's.
           if [ "$BENCH_PROVIDER" = gemini ]; then
             case "$model" in gemini-2.5*) effort="none" ;; gemini-*) effort="minimal" ;; *) effort="" ;; esac
+            case "$model" in gemma-*) concurrency=4 ;; esac
           fi
           if [ -z "$model" ]; then
             echo "::error title=No model::Set the BENCH_MODEL repository variable or the workflow's model input."
@@ -193,6 +199,7 @@ jobs:
           args=(--model "$MODEL" --base-url "$BASE" --concurrency "$CONCURRENCY" --scale "$BENCH_SCALE"
                 --out bench-report.json)
           if [ -n "$EFFORT" ]; then args+=(--reasoning-effort "$EFFORT"); fi
+          if [ -n "$BENCH_JUDGE_MODEL" ]; then args+=(--judge-model "$BENCH_JUDGE_MODEL"); fi
           uv run --locked python bench/run_bench.py "${args[@]}"
       - name: Print report
         if: always() && steps.setup.outputs.present == 'true'

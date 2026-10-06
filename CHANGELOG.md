@@ -10,8 +10,8 @@ comments. The phases refer to
 
 ### Added
 - The benchmark workflow takes a model provider (`BENCH_PROVIDER`): `openai`,
-  `gemini` (free tier, secret `GEMINI_API_KEY`, `gemini-3.8-flash` with minimal
-  thinking; Gemini 2.5 Flash is closed to new users) or `custom` (any OpenAI-compatible endpoint). Each has its own key secret,
+  `gemini` (free tier, secret `GEMINI_API_KEY`, `gemma-4-31b-it`: the only
+  model there whose free daily quota fits a run) or `custom` (any OpenAI-compatible endpoint). Each has its own key secret,
   default model and parallel-request limit, and the key check works for all of
   them.
 - `reasoning_effort` setting (config, CLI config files, `bench/run_bench.py
