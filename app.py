@@ -18,11 +18,9 @@ from config import (
     QUALITY_MODE_LABELS,
     DistillationConfig,
 )
-from pipeline.decontam import EVAL_SETS
 from pipeline.document_loader import source_chunks
 from pipeline.jobs import get_runner
-from pipeline.pii import presidio_available
-from pipeline.pricing import estimate_cost, is_local
+from pipeline.pricing import is_local
 from pipeline.service import new_run, read_documents
 from pipeline.synth import PAIRS_PER_CHUNK_ESTIMATE
 from pipeline.version import __version__
@@ -35,163 +33,27 @@ from ui.common import (
     setup_page,
     visible_run,
 )
+from ui.generate import (
+    MAX_WARN_BYTES,
+    endpoint_options,
+    estimate,
+    friendly_errors,
+    server_endpoint_label,
+    upload_errors,
+)
 from ui.results import render_run
+from ui.sidebar import render_sidebar
 
 setup_page("Generate")
 logger = structlog.get_logger(__name__)
 
-MAX_WARN_BYTES: int = 10 * 1024 * 1024   # warn at 10 MB
-MAX_HARD_BYTES: int = 50 * 1024 * 1024   # hard limit at 50 MB per file
-
 st.title(f"🧠 Brainbrew v{__version__}")
 st.caption("Grounded synthetic dataset generator for any OpenAI-compatible model")
 
-# ── Model endpoint ───────────────────────────────────────────────────────────
-# The server's own API key (OPENAI_API_KEY) is only ever sent to the server's
-# own endpoint (OPENAI_BASE_URL, or OpenAI when unset). Any other endpoint a
-# visitor picks gets only the key that visitor typed, so the server key cannot
-# be redirected to a URL the visitor controls.
 SERVER_BASE_URL: str | None = os.getenv("OPENAI_BASE_URL", "").strip() or None
 DEFAULT_MODEL = os.getenv("BRAINBREW_DEFAULT_MODEL", "").strip() or "gpt-4o-mini"
-ALLOW_CUSTOM_ENDPOINTS = custom_endpoints_allowed()
-_CUSTOM = "custom"
-_URL_POLICY_LABELS = {
-    "domain": "Keep the site, drop the path",
-    "redact": "Remove links",
-    "keep": "Keep links",
-}
-_SERVER_ENDPOINT_LABEL = "Server default" if SERVER_BASE_URL else "OpenAI API"
-ENDPOINTS: dict[str, str | None] = {_SERVER_ENDPOINT_LABEL: SERVER_BASE_URL}
-if ALLOW_CUSTOM_ENDPOINTS:
-    ENDPOINTS.update({
-        "Local vLLM server (localhost:8000)": "http://localhost:8000/v1",
-        "Ollama (localhost:11434)": "http://localhost:11434/v1",
-        "Custom URL…": _CUSTOM,
-    })
-
-# ── Sidebar: settings ────────────────────────────────────────────────────────
-
-with st.sidebar:
-    st.header("⚙️ Settings")
-    endpoint_label: str = st.selectbox(
-        "Model endpoint",
-        options=list(ENDPOINTS),
-        help="Any OpenAI-compatible API: OpenAI, `vllm serve`, Ollama, llama.cpp, or a hosted provider.",
-    )
-    base_url: str | None = ENDPOINTS[endpoint_label]
-    if base_url == _CUSTOM:
-        base_url = st.text_input("Endpoint URL", placeholder="https://my-server.example.com/v1") or None
-    on_server_endpoint = endpoint_label == _SERVER_ENDPOINT_LABEL
-
-    # Server-side secrets are never used as widget values: Streamlit sends widget
-    # state to the browser, so a pre-filled password field discloses the key to
-    # every visitor. The env value is applied server-side as a fallback instead.
-    openai_env_key = os.getenv("OPENAI_API_KEY", "")
-    use_server_key = bool(openai_env_key) and on_server_endpoint
-    openai_key: str = st.text_input(
-        "API Key",
-        type="password",
-        placeholder="Using server key" if use_server_key else "sk-...",
-        help="Your key for this endpoint. Local servers (vLLM, Ollama) usually need none.",
-    )
-    if use_server_key:
-        st.caption("🔑 *Server API key configured; leave blank to use it*")
-    elif openai_env_key:
-        st.caption("🔒 *The server's key is only used with its own endpoint. Enter a key if this one needs it.*")
-    elif base_url is None:
-        st.caption("⚠️ *API Key required for the OpenAI API*")
-
-    hf_env_token = os.getenv("HF_TOKEN", "")
-    hf_token: str = st.text_input(
-        "Hugging Face Token",
-        type="password",
-        placeholder="Using server token" if hf_env_token else "hf_...",
-        help="Enter your Hugging Face write token. Create one at the [Hugging Face Settings page](https://huggingface.co/settings/tokens).",
-    )
-    if hf_env_token:
-        st.caption("🔑 *Server HF token configured; leave blank to use it*")
-
-    st.divider()
-    st.subheader("🧪 Data cleaning")
-    use_semantic_chunking: bool = st.checkbox(
-        "Semantic chunking",
-        value=False,
-        help="Split documents by paragraph + sentence boundaries instead of fixed character windows.",
-    )
-    enable_dedup: bool = st.checkbox(
-        "Deduplicate dataset",
-        value=True,
-        help="Drop exact and near-duplicate question/answer pairs (MinHash).",
-    )
-    sanitize_dataset: bool = st.checkbox(
-        "Clean & sanitize dataset",
-        value=False,
-        help=(
-            "Remove PII (emails, phone numbers, IPs, card and bank numbers, links), strip HTML "
-            "artifacts, and drop low-quality pairs before export."
-        ),
-    )
-    pii_url_policy = "domain"
-    pii_presidio = False
-    if sanitize_dataset:
-        pii_url_policy = st.selectbox(
-            "Links in the data",
-            options=list(_URL_POLICY_LABELS),
-            format_func=_URL_POLICY_LABELS.__getitem__,
-            help="Login details and secret-looking query values are removed from links in every mode.",
-        )
-        if presidio_available():
-            pii_presidio = st.checkbox(
-                "Also detect names (Presidio)",
-                value=False,
-                help="NER-based detection of person names, passport and licence numbers. Slower.",
-            )
-    decontaminate: list[str] = st.multiselect(
-        "Remove benchmark overlap",
-        options=list(EVAL_SETS),
-        format_func=lambda key: EVAL_SETS[key].label,
-        help=(
-            "Drop pairs that share a 13-word passage with these public test sets, so models "
-            "trained on the dataset are not evaluated on text they have seen. Downloads the "
-            "benchmarks from Hugging Face on first use."
-        ),
-    )
-
-    with st.expander("🔧 Generation settings"):
-        temperature: float = st.slider(
-            "Temperature", 0.0, 2.0, 0.7, 0.1,
-            help="Higher values give more varied questions and answers.",
-        )
-        max_new_tokens: int = st.number_input(
-            "Max answer length (tokens)", min_value=128, max_value=32768, value=2048, step=128,
-        )
-        concurrency: int = st.number_input(
-            "Parallel requests", min_value=1, max_value=64, value=8,
-            help="Requests in flight at once. Lower it for a slow local server.",
-        )
-        request_timeout: int = st.number_input(
-            "Request timeout (seconds)", min_value=10, max_value=1800, value=120, step=10,
-        )
-        judge_model: str = st.text_input(
-            "Judge model", value="",
-            help="Grades every pair in Balanced and Research mode. Blank: the (first) teacher model.",
-        )
-        judge_threshold: int = st.select_slider(
-            "Minimum judge score", options=[1, 2, 3, 4, 5], value=4,
-            help="A pair is kept only if faithfulness, helpfulness and correctness all reach this score.",
-        )
-        embedding_model: str = st.text_input(
-            "Embedding model (semantic dedup)", value="",
-            help=(
-                "Also drop paraphrased duplicates using embeddings from the same endpoint, e.g. "
-                "`text-embedding-3-small` (OpenAI) or an embedding model your server hosts. Blank: off."
-            ),
-        )
-        semantic_dedup_threshold: float = st.slider(
-            "Paraphrase similarity cut-off", 0.80, 0.99, 0.92, 0.01,
-            help="Pairs at least this similar (cosine) to an accepted pair are dropped.",
-            disabled=not embedding_model.strip(),
-        )
+ENDPOINTS = endpoint_options(SERVER_BASE_URL, custom_endpoints_allowed())
+side = render_sidebar(ENDPOINTS, server_endpoint_label(SERVER_BASE_URL))
 
 # ── Main panel ───────────────────────────────────────────────────────────────
 
@@ -289,27 +151,12 @@ source_text: str = ""
 read_errors: list[str] = []
 if uploaded_files:
     source_text, read_errors = _read_uploads(tuple((f.name, f.getvalue()) for f in uploaded_files))
-chunk_count = len(source_chunks(source_text, use_semantic_chunking)) if source_text.strip() else 0
+chunk_count = len(source_chunks(source_text, side.use_semantic_chunking)) if source_text.strip() else 0
 
 
 # ── Cost / time / yield estimate ─────────────────────────────────────────────
 
-# Tokens per *accepted* pair, including over-generation, question writing,
-# answering, and (Balanced/Research) judging and evolving.
-_TOKENS_PER_PAIR: dict[str, int] = {"fast": 1500, "balanced": 2600, "research": 3800}
-
-
-def _estimate(model: str, size: int, mode: str, local: bool) -> tuple[str, str]:
-    """Return (cost_str, time_str) estimates for the UI info bar."""
-    total_tokens = size * _TOKENS_PER_PAIR.get(mode, 2600)
-    minutes = max(1, round(total_tokens / 60_000))  # ~1k tokens/s across parallel requests
-    if local:
-        return "Free (your server)", f"~{minutes} min"
-    cost = estimate_cost(model.split(",")[0].strip(), total_tokens, local) or 0.0
-    return f"~${cost:.2f}", f"~{minutes} min"
-
-
-est_cost, est_time = _estimate(teacher_model, dataset_size, quality_mode.value, is_local(base_url))
+est_cost, est_time = estimate(teacher_model, dataset_size, quality_mode.value, is_local(side.base_url))
 yield_note = ""
 if chunk_count:
     expected = chunk_count * PAIRS_PER_CHUNK_ESTIMATE
@@ -326,50 +173,8 @@ if chunk_count and dataset_size > chunk_count * PAIRS_PER_CHUNK_ESTIMATE:
 
 # ── Validation: DistillationConfig is the single source of truth ─────────────
 
-_FIELD_LABELS: dict[str, str] = {
-    "teacher_model": "Teacher model",
-    "judge_model": "Judge model",
-    "embedding_model": "Embedding model",
-    "base_model": "Base model",
-    "base_url": "Endpoint URL",
-    "hf_repo": "Hugging Face repo",
-    "hf_model_repo": "Adapter repo",
-    "api_key": "API key",
-    "hf_token": "Hugging Face token",
-    "dataset_size": "Dataset size",
-    "temperature": "Temperature",
-    "max_new_tokens": "Max answer length",
-    "concurrency": "Parallel requests",
-    "request_timeout": "Request timeout",
-    "lora_rank": "LoRA rank",
-    "decontaminate": "Benchmarks",
-}
-
-
-def _friendly_errors(exc: ValidationError) -> list[str]:
-    """Turn pydantic errors into one readable line each."""
-    messages = []
-    for err in exc.errors():
-        field = str(err["loc"][0]) if err["loc"] else ""
-        label = _FIELD_LABELS.get(field)
-        for msg in str(err["msg"]).removeprefix("Value error, ").splitlines():
-            messages.append(f"{label}: {msg}" if label else msg)
-    return messages
-
-
-validation_errors: list[str] = []
-if not uploaded_files:
-    validation_errors.append("Upload at least one document (PDF/TXT) to begin.")
-else:
-    for uploaded in uploaded_files:
-        if (getattr(uploaded, "size", 0) or 0) > MAX_HARD_BYTES:
-            validation_errors.append(
-                f"File '{uploaded.name}' exceeds the 50 MB hard size limit "
-                f"({uploaded.size / 1e6:.1f} MB)."
-            )
-    if not read_errors and not source_text.strip():
-        validation_errors.append("No text could be extracted from the uploaded documents.")
-if ENDPOINTS[endpoint_label] == _CUSTOM and not base_url:
+validation_errors = upload_errors(uploaded_files, source_text, read_errors)
+if side.custom_url_missing:
     validation_errors.append("Enter the endpoint URL.")
 
 # The server's HF token. With login on, several people share the app, so the
@@ -377,10 +182,10 @@ if ENDPOINTS[endpoint_label] == _CUSTOM and not base_url:
 # anything else needs the user's own token. Otherwise any user could overwrite
 # any repo the server token can write to.
 server_hf_token: str | None = None
-if publish and not hf_token and hf_env_token:
+if publish and not side.hf_token and side.hf_env_token:
     namespace = os.getenv("HF_USERNAME", "").strip()
     if server_hf_token_allowed(hf_repo_name, namespace, login_required()):
-        server_hf_token = hf_env_token
+        server_hf_token = side.hf_env_token
     else:
         validation_errors.append(
             f"The server's Hugging Face token can only publish to {namespace or 'the operator'}'s repos. "
@@ -391,11 +196,11 @@ cfg: DistillationConfig | None = None
 try:
     cfg = DistillationConfig(
         teacher_model=teacher_model,
-        judge_model=judge_model or None,
-        judge_threshold=judge_threshold,
-        embedding_model=embedding_model or None,
-        semantic_dedup_threshold=semantic_dedup_threshold,
-        base_url=base_url,
+        judge_model=side.judge_model or None,
+        judge_threshold=side.judge_threshold,
+        embedding_model=side.embedding_model or None,
+        semantic_dedup_threshold=side.semantic_dedup_threshold,
+        base_url=side.base_url,
         quality_mode=quality_mode,
         output_format=output_format,
         dataset_size=dataset_size,
@@ -407,21 +212,21 @@ try:
         hf_private=not hf_public,
         dataset_license=dataset_license,
         publish_adapter=publish_adapter,
-        api_key=openai_key or (openai_env_key if use_server_key else None),
-        hf_token=hf_token or server_hf_token,
-        temperature=temperature,
-        max_new_tokens=max_new_tokens,
-        concurrency=concurrency,
-        request_timeout=request_timeout,
-        use_semantic_chunking=use_semantic_chunking,
-        enable_dedup=enable_dedup,
-        sanitize_dataset=sanitize_dataset,
-        pii_url_policy=pii_url_policy,
-        pii_presidio=pii_presidio,
-        decontaminate=decontaminate,
+        api_key=side.api_key,
+        hf_token=side.hf_token or server_hf_token,
+        temperature=side.temperature,
+        max_new_tokens=side.max_new_tokens,
+        concurrency=side.concurrency,
+        request_timeout=side.request_timeout,
+        use_semantic_chunking=side.use_semantic_chunking,
+        enable_dedup=side.enable_dedup,
+        sanitize_dataset=side.sanitize_dataset,
+        pii_url_policy=side.pii_url_policy,
+        pii_presidio=side.pii_presidio,
+        decontaminate=side.decontaminate,
     )
 except ValidationError as exc:
-    validation_errors.extend(_friendly_errors(exc))
+    validation_errors.extend(friendly_errors(exc))
 
 if validation_errors:
     st.error(
