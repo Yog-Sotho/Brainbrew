@@ -21,6 +21,11 @@ comments. The phases refer to
 - Markdown documentation in `docs/` with an MkDocs site (built strictly in CI),
   replacing the 13 PDF manuals.
 - This changelog.
+- `bench/downstream.py` and the [downstream evaluation](https://github.com/Yog-Sotho/Brainbrew/blob/main/docs/downstream-eval.md)
+  runbook: a held-out, closed-book exam written from the source documents (with
+  near-copies of training questions removed), LoRA training, and paired grading
+  of the base model, the Brainbrew adapter and a control adapter, with bootstrap
+  confidence intervals. Sized for one 8 GB GPU.
 - Running jobs are cancelled when the server shuts down, so they end as
   "cancelled" instead of holding the process open; finished jobs beyond the
   last 200 are dropped from memory (their run folders stay).
@@ -39,6 +44,12 @@ comments. The phases refer to
   Debian vulnerabilities (found by the new Trivy scan).
 
 ### Fixed
+- An empty `OPENAI_BASE_URL` (what an undefined CI variable expands to) made
+  the SDK send every request to a URL without a scheme, so the first real
+  benchmark run failed all 252 requests. The engine now treats an empty value
+  as unset and uses OpenAI, as the web app already did.
+- Failed requests log their cause chain; "Connection error." alone did not say
+  why.
 - JSONL files could split one record across two lines when a text contained
   U+0085, U+2028 or U+2029, which JSON leaves unescaped but many readers treat
   as line breaks. Both writers now escape them (found by a property test).

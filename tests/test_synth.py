@@ -213,3 +213,34 @@ class TestErrorReporting:
         failures = [r for r in caplog.records if "Request failed" in r.getMessage()]
         assert len(failures) == 5  # the first few in full, the rest only counted
         assert any("only counted" in r.getMessage() for r in caplog.records)
+
+
+class TestDescribeError:
+
+    def test_includes_the_cause_the_sdk_hides(self):
+        import asyncio
+
+        from pipeline.synth import describe_error
+
+        def boom(request):
+            raise httpx2.ConnectError("[Errno -3] Temporary failure in name resolution")
+
+        async def call():
+            settings = EndpointSettings(model="m", base_url="http://x/v1", max_retries=0)
+            client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(boom)))
+            await client.chat([{"role": "user", "content": "hi"}])
+
+        with pytest.raises(Exception) as info:  # noqa: PT011 - the SDK's wrapper type is not the point
+            asyncio.run(call())
+        assert describe_error(info.value) == (
+            "APIConnectionError: Connection error. <- ConnectError: [Errno -3] Temporary failure in name resolution"
+        )
+
+    def test_plain_errors_and_limit(self):
+        from pipeline.synth import describe_error
+
+        assert describe_error(ValueError("bad")) == "ValueError: bad"
+        exc = RuntimeError("outer")
+        exc.__cause__ = KeyError("inner")
+        assert describe_error(exc) == "RuntimeError: outer <- KeyError: 'inner'"
+        assert len(describe_error(exc, limit=10)) == 10

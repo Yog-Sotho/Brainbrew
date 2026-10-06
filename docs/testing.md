@@ -38,3 +38,11 @@ Surviving mutants point at behaviour no test pins down.
 `tests/fixtures/bench/` and checks faithfulness, near-duplicates, refusals and
 yield. It runs nightly in CI when the `OPENAI_API_KEY` secret is set; see the
 README for running it locally.
+
+## Downstream evaluation
+
+`bench/downstream.py` checks whether a model trained on a Brainbrew dataset gets
+better. It writes a held-out, closed-book exam from the source documents and
+wraps LoRA training. It then grades the base model, the Brainbrew adapter and a
+control adapter, with confidence intervals. It needs a GPU; the procedure is in
+[Downstream evaluation](downstream-eval.md).

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -38,6 +39,15 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
 from engine.netguard import guard_client
 
+OPENAI_URL = "https://api.openai.com/v1"
+
+
+def default_base_url() -> str:
+    """OPENAI_BASE_URL, or OpenAI. An empty or blank variable counts as unset: the SDK
+    would otherwise use "" as the base URL and fail every request."""
+    return os.getenv("OPENAI_BASE_URL", "").strip() or OPENAI_URL
+
+
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
@@ -50,7 +60,7 @@ class EndpointSettings:
     """Where and how to call the model. Never logged with the key."""
 
     model: str
-    base_url: str | None = None  # None: the SDK default (OPENAI_BASE_URL or api.openai.com)
+    base_url: str | None = None  # None: OPENAI_BASE_URL if set and non-empty, else api.openai.com
     api_key: str | None = None
     temperature: float = 0.7
     max_tokens: int = 2048
@@ -129,7 +139,7 @@ class ChatClient:
         self._semaphore = asyncio.Semaphore(max(1, settings.concurrency))
         self._client = AsyncOpenAI(
             api_key=settings.api_key or "not-needed",
-            base_url=settings.base_url,
+            base_url=settings.base_url or default_base_url(),
             timeout=settings.timeout_s,
             max_retries=settings.max_retries,
             # Refuse metadata addresses after DNS resolution and on redirects (SSRF).
