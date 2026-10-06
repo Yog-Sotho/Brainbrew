@@ -33,6 +33,9 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      BENCH_MODEL: ${{ inputs.model || vars.BENCH_MODEL || 'gpt-4o-mini' }}
+      BENCH_SCALE: ${{ inputs.scale || '1.0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,14 +56,34 @@ jobs:
             echo "::notice::OPENAI_API_KEY secret is not set; skipping the benchmark."
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
+      # One cheap request before the benchmark, so a bad key or model name gives
+      # one clear error instead of a report full of failed documents.
+      - name: Check that OpenAI accepts the key and the model
+        if: steps.key.outputs.present == 'true' && vars.BENCH_BASE_URL == ''
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          model="${BENCH_MODEL%%,*}"
+          model="${model// /}"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H "Authorization: Bearer $OPENAI_API_KEY" "https://api.openai.com/v1/models/$model")
+          case "$code" in
+            200) echo "OpenAI accepts the key and serves $model." ;;
+            401) echo "::error title=OPENAI_API_KEY rejected::OpenAI answered 401 (invalid API key). Create a new key at https://platform.openai.com/api-keys and replace the OPENAI_API_KEY repository secret with the key alone (no quotes, spaces or line breaks)."
+                 exit 1 ;;
+            403) echo "::error title=No access::OpenAI answered 403: the key's project has no access to $model, or no billing set up."
+                 exit 1 ;;
+            404) echo "::error title=Unknown model::OpenAI does not serve '$model' to this key. Check BENCH_MODEL or the workflow's model input."
+                 exit 1 ;;
+            *) echo "::warning::OpenAI answered HTTP $code to the key check; running the benchmark anyway." ;;
+          esac
       - name: Run benchmark
         if: steps.key.outputs.present == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # Empty when the variable is not defined; the engine then uses OpenAI.
           OPENAI_BASE_URL: ${{ vars.BENCH_BASE_URL }}
-          BENCH_MODEL: ${{ inputs.model || vars.BENCH_MODEL || 'gpt-4o-mini' }}
-          BENCH_SCALE: ${{ inputs.scale || '1.0' }}
           BRAINBREW_RUNS_DIR: ${{ runner.temp }}/runs
         run: >-
           uv run --locked python bench/run_bench.py

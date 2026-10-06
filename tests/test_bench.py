@@ -66,6 +66,28 @@ def test_failed_run_is_reported(tmp_path):
     code, report, _ = _bench(tmp_path, FakeOpenAI(auth_error=True))
     (doc,) = report["documents"]
     assert code == 1 and doc["error"].startswith("AuthenticationError")
+    assert doc["fatal"]
+
+
+def test_fatal_error_stops_after_the_first_document(tmp_path, capsys):
+    # A rejected key fails every document the same way: report it once.
+    out = tmp_path / "report.json"
+    make, _ = _factory(FakeOpenAI(auth_error=True))
+    code = run_bench.main(["--model", "m", "--base-url", "http://fake/v1", "--scale", "0.4", "--out", str(out)],
+                          make_client=make)
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 1 and len(report["documents"]) == 1 and report["documents"][0]["fatal"]
+    assert "every other document would fail" in capsys.readouterr().err
+
+
+def test_ordinary_failures_do_not_stop_the_benchmark(tmp_path):
+    out = tmp_path / "report.json"
+    make, _ = _factory(FakeOpenAI(low_score_every=2))
+    code = run_bench.main(["--model", "m", "--base-url", "http://fake/v1", "--scale", "0.4", "--mode", "fast",
+                           "--only", "elements_of_style.pdf", "federalist_10.pdf", "--out", str(out)],
+                          make_client=make)
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 1 and len(report["documents"]) == 2 and not any(d["fatal"] for d in report["documents"])
 
 
 @pytest.mark.parametrize(("questions", "rate"), [

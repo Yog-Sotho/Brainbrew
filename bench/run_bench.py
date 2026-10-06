@@ -42,6 +42,7 @@ from pipeline.document_loader import read_document, source_chunks  # noqa: E402
 from pipeline.filters import answer_problem  # noqa: E402
 from pipeline.prompts import JudgeScores, judge_messages  # noqa: E402
 from pipeline.records import Record, read_records  # noqa: E402
+from pipeline.synth import FATAL_ERRORS  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures" / "bench"
 # Targets sit well below what each document can support (about 6 pairs per chunk).
@@ -71,6 +72,7 @@ class DocResult:
     usage: dict[str, Any] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
     error: str | None = None
+    fatal: bool = False   # bad key, no access or unknown model: every other document would fail too
 
 
 # ── metrics ──────────────────────────────────────────────────────────────────
@@ -159,6 +161,7 @@ def bench_document(
         try:
             result = orchestrator.run_distillation(cfg, src, client_factory=make_client)
         except Exception as exc:  # report and move on to the next document
+            res.fatal = isinstance(exc, FATAL_ERRORS)
             res.error = f"{type(exc).__name__}: {exc}"
             res.failures = [f"run failed: {res.error}"]
             res.seconds = round(time.perf_counter() - start, 1)
@@ -238,6 +241,10 @@ def main(argv: list[str] | None = None, make_client: Callable[[EndpointSettings]
               f"near-dup {res.near_dup_rate:.1%}, refusals {res.refusal_rate:.1%}, {res.seconds:.0f}s"
               + (f"  FAIL: {'; '.join(res.failures)}" if res.failures else "  ok"), flush=True)
         results.append(res)
+        if res.fatal:
+            print("Stopped: the endpoint refused the key, the access or the model, so every other "
+                  "document would fail the same way.", file=sys.stderr, flush=True)
+            break
 
     report = {
         "passed": all(not r.failures for r in results) and bool(results),
