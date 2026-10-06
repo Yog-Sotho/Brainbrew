@@ -24,9 +24,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from openai import AuthenticationError, NotFoundError, PermissionDeniedError
 
 from engine import ChatClient
+from engine.client import is_fatal_error
 from pipeline.dedup import Deduplicator, SemanticDeduplicator, normalise
 from pipeline.filters import answer_problem, clean_question
 from pipeline.prompts import (
@@ -69,8 +69,6 @@ def describe_error(exc: BaseException, limit: int = 500) -> str:
     return " <- ".join(parts)[:limit]
 
 
-# Errors that no retry or other chunk can fix: stop the whole run.
-FATAL_ERRORS = (AuthenticationError, PermissionDeniedError, NotFoundError)
 
 
 @dataclass
@@ -164,9 +162,9 @@ class _Run:
                 question_messages(self.chunks[i], k, self.s.question_types, nxt, self.asked[i][-AVOID_LIST_SIZE:]),
                 QuestionSet,
             )
-        except FATAL_ERRORS:
-            raise
         except Exception as exc:
+            if is_fatal_error(exc):
+                raise
             self._error("questions", exc)
             return
 
@@ -231,9 +229,9 @@ class _Run:
                     self.stats.judge_rejected += 1
                     self._reject(rnd, i, qtype, question, answer, teacher, "judge", scores)
                     return
-        except FATAL_ERRORS:
-            raise
         except Exception as exc:  # StructuredOutputError, timeouts after retries, 4xx/5xx
+            if is_fatal_error(exc):
+                raise
             self._error("pair", exc)
             return
 

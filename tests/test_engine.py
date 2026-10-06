@@ -202,3 +202,72 @@ class TestDefaultBaseUrl:
         monkeypatch.setenv("OPENAI_BASE_URL", "http://vllm:8000/v1")
         client = ChatClient(EndpointSettings(model="m", base_url="http://other:9000/v1"))
         assert str(client._client.base_url) == "http://other:9000/v1/"
+
+
+
+class TestFatalErrors:
+    """Errors no retry can fix stop a run; ordinary rate limits do not."""
+
+    @staticmethod
+    def _error_for(status: int, body: dict):
+        import asyncio
+
+        def reply(request):
+            return httpx2.Response(status, json=body)
+
+        async def call():
+            settings = EndpointSettings(model="m", base_url="http://x/v1", max_retries=0)
+            client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+            await client.chat([{"role": "user", "content": "hi"}])
+
+        try:
+            asyncio.run(call())
+        except Exception as exc:
+            return exc
+        raise AssertionError("no error raised")
+
+    @pytest.mark.parametrize(("status", "body", "fatal"), [
+        (401, {"error": {"message": "bad key", "type": "invalid_request_error", "code": "invalid_api_key"}}, True),
+        (403, {"error": {"message": "no access", "type": "invalid_request_error"}}, True),
+        (404, {"error": {"message": "no such model", "type": "invalid_request_error"}}, True),
+        (429, {"error": {"message": "You have no credits remaining.", "type": "insufficient_quota",
+                         "code": "credit_balance_exhausted"}}, True),
+        (429, {"error": {"message": "You exceeded your current quota.", "type": "insufficient_quota",
+                         "code": "insufficient_quota"}}, True),
+        (429, {"error": {"message": "Rate limit reached, try again.", "type": "requests",
+                         "code": "rate_limit_exceeded"}}, False),
+        (500, {"error": {"message": "server error"}}, False),
+        (400, {"error": {"message": "bad request"}}, False),
+    ])
+    def test_classification(self, status, body, fatal):
+        from engine.client import is_fatal_error
+
+        assert is_fatal_error(self._error_for(status, body)) is fatal
+
+    def test_plain_exceptions_are_not_fatal(self):
+        from engine.client import is_fatal_error
+
+        assert not is_fatal_error(ValueError("x"))
+
+    @pytest.mark.parametrize(("code", "attempts"), [
+        ("credit_balance_exhausted", 1),   # waiting does not add credits: no retry
+        ("rate_limit_exceeded", 3),        # an ordinary rate limit is retried
+    ])
+    def test_retries_only_ordinary_rate_limits(self, code, attempts):
+        import asyncio
+
+        seen = []
+
+        def reply(request):
+            seen.append(1)
+            return httpx2.Response(429, headers={"retry-after": "0"},
+                                   json={"error": {"message": "limit", "type": "x", "code": code}})
+
+        async def call():
+            settings = EndpointSettings(model="m", base_url="http://x/v1", max_retries=2)
+            client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+            await client.chat([{"role": "user", "content": "hi"}])
+
+        with pytest.raises(Exception, match="429"):
+            asyncio.run(call())
+        assert len(seen) == attempts

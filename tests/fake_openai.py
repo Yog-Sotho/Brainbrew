@@ -65,6 +65,7 @@ class FakeOpenAI:
     low_score_every: int = 0              # every Nth judge call scores 2
     rate_limit_first: bool = False        # first request gets a 429
     auth_error: bool = False              # every request gets a 401
+    quota_exhausted: bool = False         # every request gets a 429 "no credits remaining"
     questions_per_passage: int | None = None  # cap distinct questions per passage; then repeats
     leaky_first: bool = False             # first round per passage: questions that cite "the passage"
     hold: threading.Event | None = None   # requests wait until this is set (a run that stays busy)
@@ -96,6 +97,11 @@ class FakeOpenAI:
     def _handle(self, request: httpx2.Request) -> httpx2.Response:
         if self.auth_error:
             return httpx2.Response(401, json={"error": {"message": "bad key", "type": "invalid_api_key"}})
+        if self.quota_exhausted:
+            self._bump("quota")
+            return httpx2.Response(429, json={"error": {
+                "message": "You have no credits remaining.", "type": "insufficient_quota",
+                "code": "credit_balance_exhausted"}})
         if self.rate_limit_first and self._bump("http") == 1:
             return httpx2.Response(429, headers={"retry-after": "0"}, json={"error": {"message": "slow down"}})
         if self.server_error_first and self._bump("server_error") == 1:

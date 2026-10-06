@@ -29,9 +29,13 @@ import httpx2
 from openai import (
     APIStatusError,
     AsyncOpenAI,
+    AuthenticationError,
     BadRequestError,
     DefaultAsyncHttpxClient,
     InternalServerError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
     UnprocessableEntityError,
 )
 from pydantic import BaseModel, ValidationError
@@ -49,6 +53,32 @@ def default_base_url() -> str:
 
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+
+
+# A rejected key, missing access, an unknown model or an account without credits:
+# no retry and no other chunk can fix these, so a run stops at the first one.
+FATAL_ERRORS = (AuthenticationError, PermissionDeniedError, NotFoundError)
+_QUOTA_CODES = {"insufficient_quota", "credit_balance_exhausted", "billing_hard_limit_reached"}
+
+
+def is_fatal_error(exc: BaseException) -> bool:
+    """True for errors that every further request would hit too.
+
+    Running out of credits arrives as a 429 like an ordinary rate limit, but
+    waiting does not help, so it is told apart by its error code.
+    """
+    if isinstance(exc, FATAL_ERRORS):
+        return True
+    return isinstance(exc, RateLimitError) and bool({exc.code, exc.type} & _QUOTA_CODES)
+
+
+async def _no_retry_without_credits(response: httpx2.Response) -> None:
+    """The SDK retries every 429 with backoff. For "no credits left" waiting does not
+    help, so tell it not to (it obeys the x-should-retry header)."""
+    if response.status_code == 429:
+        await response.aread()
+        if any(code in response.text for code in _QUOTA_CODES):
+            response.headers["x-should-retry"] = "false"
 
 
 class StructuredOutputError(RuntimeError):
@@ -137,13 +167,16 @@ class ChatClient:
         self.usage = Usage()
         self._caps = _Capabilities()
         self._semaphore = asyncio.Semaphore(max(1, settings.concurrency))
+        # Refuse metadata addresses after DNS resolution and on redirects (SSRF).
+        http = guard_client(http_client or DefaultAsyncHttpxClient())
+        hooks = http.event_hooks
+        http.event_hooks = {**hooks, "response": [*hooks.get("response", []), _no_retry_without_credits]}
         self._client = AsyncOpenAI(
             api_key=settings.api_key or "not-needed",
             base_url=settings.base_url or default_base_url(),
             timeout=settings.timeout_s,
             max_retries=settings.max_retries,
-            # Refuse metadata addresses after DNS resolution and on redirects (SSRF).
-            http_client=guard_client(http_client or DefaultAsyncHttpxClient()),
+            http_client=http,
         )
 
     async def close(self) -> None:

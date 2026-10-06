@@ -50,10 +50,16 @@ comments. The phases refer to
   as unset and uses OpenAI, as the web app already did.
 - Failed requests log their cause chain; "Connection error." alone did not say
   why.
-- The benchmark workflow checks the API key and model with one request before
-  running, and fails with a single clear error if OpenAI rejects them. The
-  benchmark itself stops at the first fatal error (rejected key, no access,
-  unknown model) instead of repeating it for every document.
+- The benchmark workflow checks the API key, the model and the account with a
+  1-token request before running, and fails with a single clear error if
+  OpenAI refuses them. The benchmark itself stops at the first fatal error
+  (rejected key, no access, unknown model, no credits) instead of repeating it
+  for every document.
+- An OpenAI account without credits answers 429, which looked like a rate
+  limit: every request was retried with backoff and every chunk tried (252
+  requests over five minutes in the benchmark). "No credits" is now fatal: it
+  is not retried and stops the run at once, in the app, the CLI and the
+  benchmark. Ordinary rate limits are still retried.
 - JSONL files could split one record across two lines when a text contained
   U+0085, U+2028 or U+2029, which JSON leaves unescaped but many readers treat
   as line breaks. Both writers now escape them (found by a property test).
