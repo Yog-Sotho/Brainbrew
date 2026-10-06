@@ -44,6 +44,12 @@ comments. The phases refer to
   Debian vulnerabilities (found by the new Trivy scan).
 
 ### Fixed
+- An empty `OPENAI_BASE_URL` (what an undefined CI variable expands to) made
+  the SDK send every request to a URL without a scheme, so the first real
+  benchmark run failed all 252 requests. The engine now treats an empty value
+  as unset and uses OpenAI, as the web app already did.
+- Failed requests log their cause chain; "Connection error." alone did not say
+  why.
 - JSONL files could split one record across two lines when a text contained
   U+0085, U+2028 or U+2029, which JSON leaves unescaped but many readers treat
   as line breaks. Both writers now escape them (found by a property test).

@@ -179,3 +179,26 @@ def test_settings_repr_hides_key():
     s = EndpointSettings(model="m", api_key="sk-secret-value")
     assert "sk-secret-value" not in repr(s)
     assert "sk-secret-value" not in json.dumps({"s": repr(s)})
+
+
+class TestDefaultBaseUrl:
+    """base_url=None means OPENAI_BASE_URL, or OpenAI; an empty variable counts as unset."""
+
+    @pytest.mark.parametrize(("env", "expected"), [
+        (None, "https://api.openai.com/v1/"),
+        ("", "https://api.openai.com/v1/"),            # what an undefined CI variable expands to
+        ("   ", "https://api.openai.com/v1/"),
+        ("http://vllm:8000/v1", "http://vllm:8000/v1/"),
+    ])
+    def test_resolution(self, monkeypatch, env, expected):
+        if env is None:
+            monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        else:
+            monkeypatch.setenv("OPENAI_BASE_URL", env)
+        client = ChatClient(EndpointSettings(model="m"))
+        assert str(client._client.base_url) == expected
+
+    def test_explicit_url_wins(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_BASE_URL", "http://vllm:8000/v1")
+        client = ChatClient(EndpointSettings(model="m", base_url="http://other:9000/v1"))
+        assert str(client._client.base_url) == "http://other:9000/v1/"

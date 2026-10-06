@@ -57,6 +57,7 @@ jobs:
         if: steps.key.outputs.present == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Empty when the variable is not defined; the engine then uses OpenAI.
           OPENAI_BASE_URL: ${{ vars.BENCH_BASE_URL }}
           BENCH_MODEL: ${{ inputs.model || vars.BENCH_MODEL || 'gpt-4o-mini' }}
           BENCH_SCALE: ${{ inputs.scale || '1.0' }}
