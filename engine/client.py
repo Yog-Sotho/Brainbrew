@@ -12,7 +12,9 @@ One code path for OpenAI, `vllm serve`, Ollama, llama.cpp and hosted providers:
 * structured outputs: `response_format={"type": "json_schema", ...}` when the
   server supports it, falling back to JSON mode and then to a schema-in-prompt
   request for servers that reject it;
-* token usage accounting, so runs can report what they cost.
+* token usage accounting, so runs can report what they cost;
+* no requests to cloud metadata addresses, even via DNS or redirects
+  (engine/netguard.py).
 """
 from __future__ import annotations
 
@@ -27,11 +29,14 @@ from openai import (
     APIStatusError,
     AsyncOpenAI,
     BadRequestError,
+    DefaultAsyncHttpxClient,
     InternalServerError,
     UnprocessableEntityError,
 )
 from pydantic import BaseModel, ValidationError
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
+
+from engine.netguard import guard_client
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
@@ -127,7 +132,8 @@ class ChatClient:
             base_url=settings.base_url,
             timeout=settings.timeout_s,
             max_retries=settings.max_retries,
-            http_client=http_client,
+            # Refuse metadata addresses after DNS resolution and on redirects (SSRF).
+            http_client=guard_client(http_client or DefaultAsyncHttpxClient()),
         )
 
     async def close(self) -> None:
