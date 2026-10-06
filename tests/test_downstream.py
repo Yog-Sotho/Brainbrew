@@ -177,6 +177,7 @@ class TestEvaluate:
         assert {s.temperature for s in made} == {0.0}
         first = report["answers"][0]
         assert first["base"]["score"] == 1 and first["tuned"]["answer"] == first["reference"]
+        assert first["tuned"]["reason"] == "compared"
 
     def test_no_difference_is_not_significant(self, tmp_path, corpus):
         _, report, _ = self._run(tmp_path, corpus, FakeServer(base_knows=True))

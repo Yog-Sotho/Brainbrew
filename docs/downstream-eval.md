@@ -95,6 +95,10 @@ How the exam is built:
   the point: it measures whether the student learned them, not whether it
   memorised the wording.
 - The command prints how many proposed questions each filter removed.
+- Use a strong writer. In a CPU trial, a 3B model wrote some questions that
+  only make sense with the document in hand ("in Rule 4", "according to
+  Note 6"), and one reference answer that copied an unrelated sentence. Skim
+  `testset.jsonl` before taking the exam.
 
 ## 4. Train the adapters (GPU free)
 
@@ -133,7 +137,7 @@ How the evaluation works:
 - The first model listed is the baseline.
 - Every other model gets its mean gain over the baseline, a paired bootstrap 95%
   confidence interval, and its wins, ties and losses per question.
-- `downstream-report.json` holds every answer and grade, for reading the failures.
+- `downstream-report.json` holds every answer, its grade and the judge's reason, for reading the failures.
 
 ```text
 | Model                        | Mean grade | Correct | Gain vs baseline [95% CI] | Wins / ties / losses |

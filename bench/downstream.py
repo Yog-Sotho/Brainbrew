@@ -51,6 +51,7 @@ from pipeline.document_loader import source_chunks  # noqa: E402
 from pipeline.filters import clean_question  # noqa: E402
 from pipeline.records import read_records  # noqa: E402
 from pipeline.service import read_documents  # noqa: E402
+from pipeline.synth import describe_error  # noqa: E402
 
 ClientFactory = Callable[[EndpointSettings], ChatClient]
 
@@ -289,25 +290,27 @@ def compare(base: dict[int, int], other: dict[int, int], seed: int) -> dict[str,
     }
 
 
-async def answer_and_grade(
-    items: list[ExamQuestion], student: ChatClient, judge: ChatClient,
-) -> tuple[dict[int, int], dict[int, str], int]:
-    """Scores and answers by question id, plus the number of failed questions."""
+@dataclass
+class Graded:
+    answer: str
+    score: int | None = None   # None: the question failed (see answer)
+    reason: str = ""
 
-    async def one(item: ExamQuestion) -> tuple[int, str, int | None]:
+
+async def answer_and_grade(items: list[ExamQuestion], student: ChatClient, judge: ChatClient) -> dict[int, Graded]:
+    """Every question's answer and grade, by question id."""
+
+    async def one(item: ExamQuestion) -> tuple[int, Graded]:
         try:
             answer = await student.chat([{"role": "system", "content": STUDENT_SYSTEM},
                                          {"role": "user", "content": item.question}])
             grade = await judge.chat_json(grade_messages(item.question, item.reference, item.passage, answer),
                                           Grade, temperature=0.0)
         except Exception as exc:
-            return item.id, f"[error] {type(exc).__name__}: {exc}"[:300], None
-        return item.id, answer, min(5, max(1, grade.score))
+            return item.id, Graded(f"[error] {describe_error(exc, 300)}")
+        return item.id, Graded(answer, min(5, max(1, grade.score)), grade.reason.strip()[:500])
 
-    results = await asyncio.gather(*(one(i) for i in items))
-    scores = {qid: s for qid, _, s in results if s is not None}
-    answers = {qid: a for qid, a, _ in results}
-    return scores, answers, sum(s is None for _, _, s in results)
+    return dict(await asyncio.gather(*(one(i) for i in items)))
 
 
 def cmd_evaluate(args: argparse.Namespace, make_client: ClientFactory = _make_client) -> int:
@@ -319,7 +322,7 @@ def cmd_evaluate(args: argparse.Namespace, make_client: ClientFactory = _make_cl
                                       api_key=api_key_for(args.judge_base_url), temperature=0.0,
                                       max_tokens=300, concurrency=args.concurrency, timeout_s=float(args.timeout))
 
-    async def run_model(model: str) -> tuple[dict[int, int], dict[int, str], int]:
+    async def run_model(model: str) -> dict[int, Graded]:
         student = make_client(EndpointSettings(
             model=model, base_url=args.student_base_url, api_key=api_key_for(args.student_base_url),
             temperature=0.0, max_tokens=args.max_tokens, concurrency=args.concurrency,
@@ -333,12 +336,13 @@ def cmd_evaluate(args: argparse.Namespace, make_client: ClientFactory = _make_cl
 
     results: list[ModelResult] = []
     all_scores: list[dict[int, int]] = []
-    all_answers: list[dict[int, str]] = []
+    all_graded: list[dict[int, Graded]] = []
     for model in args.models:
         print(f"→ {model}", flush=True)
         start = time.perf_counter()
-        scores, answers, errors = asyncio.run(run_model(model))
-        res = ModelResult(model=model, graded=len(scores), errors=errors,
+        graded = asyncio.run(run_model(model))
+        scores = {qid: g.score for qid, g in graded.items() if g.score is not None}
+        res = ModelResult(model=model, graded=len(scores), errors=len(graded) - len(scores),
                           seconds=round(time.perf_counter() - start, 1))
         if scores:
             res.mean_score = round(sum(scores.values()) / len(scores), 3)
@@ -349,7 +353,7 @@ def cmd_evaluate(args: argparse.Namespace, make_client: ClientFactory = _make_cl
               f"{res.errors} failed, {res.seconds:.0f}s", flush=True)
         results.append(res)
         all_scores.append(scores)
-        all_answers.append(answers)
+        all_graded.append(graded)
 
     report = {
         "testset": str(args.testset),
@@ -360,8 +364,7 @@ def cmd_evaluate(args: argparse.Namespace, make_client: ClientFactory = _make_cl
         "models": [asdict(r) for r in results],
         "answers": [
             {"id": item.id, "question": item.question, "reference": item.reference,
-             **{m: {"answer": a.get(item.id), "score": s.get(item.id)}
-                for m, a, s in zip(args.models, all_answers, all_scores, strict=True)}}
+             **{m: asdict(g[item.id]) for m, g in zip(args.models, all_graded, strict=True)}}
             for item in items
         ],
     }
