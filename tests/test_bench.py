@@ -114,3 +114,11 @@ def test_near_dup_rate(questions, rate):
 def test_gate_checks():
     res = run_bench.DocResult(document="d", target=10, records=8, faithfulness=4.5, yield_ratio=0.8)
     assert run_bench.check_gate(res) == ["yield 8/10 outside ±10%"]
+
+
+def test_reasoning_effort_reaches_every_request(tmp_path):
+    fake = FakeOpenAI()
+    code, _, made = _bench(tmp_path, fake, "--reasoning-effort", "none")
+    assert code == 0
+    assert fake.calls and all(c.get("reasoning_effort") == "none" for c in fake.calls)
+    assert {s.reasoning_effort for s in made} == {"none"}

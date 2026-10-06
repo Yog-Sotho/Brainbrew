@@ -77,6 +77,7 @@ def _endpoint(
         max_tokens=cfg.max_new_tokens,
         timeout_s=float(cfg.request_timeout),
         concurrency=cfg.concurrency,
+        reasoning_effort=cfg.reasoning_effort,
     )
 
 

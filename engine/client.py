@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx2
+import structlog
 from openai import (
     APIStatusError,
     AsyncOpenAI,
@@ -42,6 +43,8 @@ from pydantic import BaseModel, ValidationError
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
 from engine.netguard import guard_client
+
+logger = structlog.get_logger(__name__)
 
 OPENAI_URL = "https://api.openai.com/v1"
 
@@ -98,6 +101,9 @@ class EndpointSettings:
     max_retries: int = 4
     concurrency: int = 8
     seed: int | None = None  # sent with every chat request when set (reproducible sampling)
+    # "none" turns thinking off where a server supports it (e.g. Gemini 2.5 Flash, whose
+    # thinking otherwise uses up the answer's token budget); None leaves the server default.
+    reasoning_effort: str | None = None
 
     def __repr__(self) -> str:
         return (f"EndpointSettings(model={self.model!r}, base_url={self.base_url!r}, "
@@ -126,6 +132,7 @@ class _Capabilities:
     """What the server accepted for structured output (learned on first use)."""
 
     response_format: str = "json_schema"  # -> "json_object" -> "prompt"
+    send_seed: bool = True                 # False once the server rejected the seed field
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -217,9 +224,24 @@ class ChatClient:
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
-        if self.settings.seed is not None:
+        if self.settings.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.settings.reasoning_effort
+        send_seed = self.settings.seed is not None and self._caps.send_seed
+        if send_seed:
             kwargs["seed"] = self.settings.seed
-        completion = await self._client.chat.completions.create(**kwargs)
+        try:
+            completion = await self._client.chat.completions.create(**kwargs)
+        except (BadRequestError, UnprocessableEntityError) as exc:
+            # Some OpenAI-compatible servers reject the seed field. Sample without it
+            # rather than failing every request (handled here, so the structured-output
+            # fallback does not mistake it for an unsupported response_format).
+            if not send_seed or "seed" not in str(exc).lower():
+                raise
+            if self._caps.send_seed:
+                self._caps.send_seed = False
+                logger.warning("The server rejected the seed; sampling without one", model=self.settings.model)
+            kwargs.pop("seed")
+            completion = await self._client.chat.completions.create(**kwargs)
         self.usage.add(completion.usage)
         if not completion.choices:
             return ""

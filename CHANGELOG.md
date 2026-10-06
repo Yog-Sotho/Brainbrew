@@ -9,6 +9,16 @@ comments. The phases refer to
 ## [Unreleased]: Phase 4, hardening, and audit follow-ups
 
 ### Added
+- The benchmark workflow takes a model provider (`BENCH_PROVIDER`): `openai`,
+  `gemini` (free tier, secret `GEMINI_API_KEY`, `gemini-2.5-flash` with thinking
+  off) or `custom` (any OpenAI-compatible endpoint). Each has its own key secret,
+  default model and parallel-request limit, and the key check works for all of
+  them.
+- `reasoning_effort` setting (config, CLI config files, `bench/run_bench.py
+  --reasoning-effort`): `none` turns thinking off where the server allows it, so
+  thinking does not use up the answer's token budget.
+- A server that rejects the `seed` field gets requests without it (logged once),
+  instead of failing every request.
 - `mypy --strict` for the whole codebase (settings and file list in
   `pyproject.toml`; run `uv run mypy`); ruff's security (`S`),
   pytest (`PT`) and `RUF` rule sets; a pre-commit configuration that runs the

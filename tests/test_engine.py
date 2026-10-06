@@ -271,3 +271,80 @@ class TestFatalErrors:
         with pytest.raises(Exception, match="429"):
             asyncio.run(call())
         assert len(seen) == attempts
+
+
+class TestRequestFields:
+
+    @staticmethod
+    def _client(reply, **settings):
+        defaults = {"model": "m", "base_url": "http://x/v1", "max_retries": 0}
+        return ChatClient(EndpointSettings(**{**defaults, **settings}),
+                          http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+
+    @staticmethod
+    def _ok(content: str = "fine"):
+        return httpx2.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": content}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    @pytest.mark.parametrize("effort", ["none", None])
+    def test_reasoning_effort_only_when_set(self, effort):
+        import asyncio
+        import json
+
+        bodies = []
+
+        def reply(request):
+            bodies.append(json.loads(request.content))
+            return self._ok()
+
+        asyncio.run(self._client(reply, reasoning_effort=effort).chat([{"role": "user", "content": "hi"}]))
+        assert bodies[0].get("reasoning_effort") == effort
+        assert ("reasoning_effort" in bodies[0]) is (effort is not None)
+
+    def test_a_rejected_seed_is_dropped_once_and_remembered(self):
+        # Some OpenAI-compatible servers reject the seed field: sample without it
+        # instead of failing every request, and keep the JSON mode as it was.
+        import asyncio
+        import json
+
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            text: str
+
+        bodies = []
+
+        def reply(request):
+            body = json.loads(request.content)
+            bodies.append(body)
+            if "seed" in body:
+                return httpx2.Response(400, json={"error": {"message": 'Invalid JSON payload: Unknown name "seed"'}})
+            return self._ok('{"text": "ok"}')
+
+        client = self._client(reply, seed=7)
+
+        async def run():
+            first = await client.chat_json([{"role": "user", "content": "a"}], Answer)
+            second = await client.chat_json([{"role": "user", "content": "b"}], Answer)
+            return first, second
+
+        first, second = asyncio.run(run())
+        assert first.text == second.text == "ok"
+        assert ["seed" in b for b in bodies] == [True, False, False]   # one rejection, then never again
+        assert all(b["response_format"]["type"] == "json_schema" for b in bodies)
+
+    def test_other_bad_requests_are_not_retried_without_seed(self):
+        import asyncio
+
+        seen = []
+
+        def reply(request):
+            seen.append(1)
+            return httpx2.Response(400, json={"error": {"message": "context length exceeded"}})
+
+        with pytest.raises(Exception, match="context length"):
+            asyncio.run(self._client(reply, seed=7).chat([{"role": "user", "content": "hi"}]))
+        assert len(seen) == 1

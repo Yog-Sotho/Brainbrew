@@ -117,6 +117,9 @@ class DistillationConfig(BaseModel):
     concurrency: int = Field(8, ge=1, le=64)
     request_timeout: int = Field(120, ge=10, le=1800)
     seed: int | None = Field(None, ge=0, le=2**31 - 1, description="Sampling seed; a random one is recorded when unset")
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = Field(
+        None, description="Thinking effort for models that think (e.g. 'none' for Gemini 2.5 Flash); unset: the server default",
+    )
     lora_rank: int = Field(16, ge=4, le=256)
     api_key: str | None = None
     hf_token: str | None = None
