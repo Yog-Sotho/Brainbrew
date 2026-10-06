@@ -20,8 +20,17 @@ comments. The phases refer to
 - Markdown documentation in `docs/` with an MkDocs site (built strictly in CI),
   replacing the 13 PDF manuals.
 - This changelog.
+- Running jobs are cancelled when the server shuts down, so they end as
+  "cancelled" instead of holding the process open; finished jobs beyond the
+  last 200 are dropped from memory (their run folders stay).
 
 ### Security
+- Endpoint URLs pointing at link-local or cloud metadata addresses are
+  rejected (SSRF), including numeric and IPv4-mapped spellings.
+- With login on, custom endpoints are off unless the operator sets
+  `BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=1` (fail closed on shared servers).
+- With login on, the server's Hugging Face token only publishes to the
+  operator's namespace (`HF_USERNAME`); other repos need the user's own token.
 - Base image bumped: the pinned Python image had 8 fixable HIGH/CRITICAL
   Debian vulnerabilities (found by the new Trivy scan).
 
@@ -29,6 +38,14 @@ comments. The phases refer to
 - JSONL files could split one record across two lines when a text contained
   U+0085, U+2028 or U+2029, which JSON leaves unescaped but many readers treat
   as line breaks. Both writers now escape them (found by a property test).
+- Failed generation requests were only counted. The first five are now logged
+  with their error, and a run that produces nothing reports the last error.
+- An invalid `BRAINBREW_MAX_JOBS` gave a bare `int()` error; it now says what
+  the variable must be.
+
+### Removed
+- Unused code: `exporter.deduplicate_records` (use `pipeline.dedup.deduplicate`),
+  `pii.URL_POLICIES` and `quality.GRADES`.
 
 ## [2.0.0] - 2026-10-06: Phases 2 and 3
 

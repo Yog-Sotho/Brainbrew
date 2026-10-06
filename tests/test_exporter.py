@@ -1,7 +1,7 @@
 """
 tests/test_exporter.py
 
-Formatting of canonical records into the four export formats, and dedup.
+Formatting of canonical records into the four export formats, and dedup before export.
 """
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
+from pipeline.dedup import deduplicate
 from pipeline.exporter import (
     FORMATTERS,
     OPENAI_SYSTEM_PROMPT,
-    deduplicate_records,
     export_dataset,
 )
 from pipeline.records import Record
@@ -101,17 +101,17 @@ class TestDeduplication:
 
     def test_exact_duplicates_removed(self):
         recs = [_rec("What is AI?", "Artificial Intelligence.")] * 3
-        assert len(deduplicate_records(recs)) == 1
+        assert len(deduplicate(recs)) == 1
 
     def test_near_duplicates_removed(self):
         recs = [
             _rec("What is machine learning?", "Machine learning is a subset of AI that learns from data."),
             _rec("What is machine learning ?", "Machine learning is a subset of AI that learns from data!"),
         ]
-        assert len(deduplicate_records(recs)) == 1
+        assert len(deduplicate(recs)) == 1
 
     def test_empty_input_returns_empty(self):
-        assert deduplicate_records([]) == []
+        assert deduplicate([]) == []
 
     def test_unique_records_preserved_in_order(self):
         recs = [
@@ -119,11 +119,11 @@ class TestDeduplication:
             _rec("Explain photosynthesis.", "Plants convert light energy into chemical energy."),
             _rec("Who wrote Hamlet?", "William Shakespeare wrote Hamlet around 1600."),
         ]
-        assert deduplicate_records(recs) == recs
+        assert deduplicate(recs) == recs
 
     def test_meta_kept_on_survivors(self):
         recs = [_rec("Q?", "A long enough answer.", seed="first"), _rec("Q?", "A long enough answer.", seed="second")]
-        assert deduplicate_records(recs)[0].meta == {"seed": "first"}
+        assert deduplicate(recs)[0].meta == {"seed": "first"}
 
 
 class TestPerformance:

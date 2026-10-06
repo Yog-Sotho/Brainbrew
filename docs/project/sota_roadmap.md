@@ -1,6 +1,6 @@
 # Brainbrew: Roadmap from 3/10 to ≥ 8/10
 
-Source: [`codebase_audit.md`](./codebase_audit.md) (2026-10-05). The phases are ordered by dependency. Each phase ends with acceptance criteria that can be checked mechanically. **Do not start a later phase until the current phase's gate passes.**
+Source: [`codebase_audit_baseline.md`](./codebase_audit_baseline.md) (2026-10-05; the current audit is [`codebase_audit.md`](./codebase_audit.md)). The phases are ordered by dependency. Each phase ends with acceptance criteria that can be checked mechanically. **Do not start a later phase until the current phase's gate passes.**
 
 ## Target scores
 

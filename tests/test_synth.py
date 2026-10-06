@@ -193,3 +193,23 @@ class TestHelpers:
     def test_judge_passes(self, scores, threshold, ok):
         f, h, c = scores
         assert judge_passes(JudgeScores(faithfulness=f, helpfulness=h, correctness=c, reason=""), threshold) is ok
+
+
+class TestErrorReporting:
+
+    def test_failures_are_logged_and_the_last_one_kept(self, caplog):
+        def broken(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(400, json={"error": {"message": "model 'nope' does not exist"}})
+
+        settings = EndpointSettings(model="nope", base_url="http://fake/v1", api_key="k", max_retries=0)
+        client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(broken)))
+        from pipeline.logs import configure_logging
+
+        configure_logging(force=True)  # route structlog through stdlib, as the app does
+        with caplog.at_level("WARNING"):
+            recs, stats = asyncio.run(synthesize(CHUNKS, [client], SynthSettings(target=5, max_rounds=2)))
+        assert recs == [] and stats.errors >= 5
+        assert stats.last_error is not None and "does not exist" in stats.last_error
+        failures = [r for r in caplog.records if "Request failed" in r.getMessage()]
+        assert len(failures) == 5  # the first few in full, the rest only counted
+        assert any("only counted" in r.getMessage() for r in caplog.records)

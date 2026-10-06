@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from config import DistillationConfig
-from pipeline import logs, pricing
+from pipeline import jobs, logs, pricing
 from pipeline.gpu import gpu_slot
 from pipeline.jobs import JobRunner, list_runs, run_state
 from pipeline.runs import RunCancelled, create_run, runs_base
@@ -118,6 +118,68 @@ class TestJobRunner:
         fake.started.acquire(timeout=5)
         runner.shutdown(wait=True)
         assert job.status == "cancelled"
+
+    @pytest.mark.parametrize("raw", ["0", "-1", "two", "1.5", ""])
+    def test_bad_max_jobs_is_a_clear_error(self, monkeypatch, raw):
+        monkeypatch.setenv("BRAINBREW_MAX_JOBS", raw)
+        with pytest.raises(ValueError, match="BRAINBREW_MAX_JOBS must be a positive whole number"):
+            JobRunner(runner=_FakeRun())
+
+    def test_max_jobs_from_env(self, monkeypatch):
+        monkeypatch.setenv("BRAINBREW_MAX_JOBS", " 3 ")
+        runner = JobRunner(runner=_FakeRun())
+        assert runner.max_jobs == 3
+        runner.shutdown()
+
+    def test_finished_jobs_are_forgotten_beyond_the_limit(self, monkeypatch):
+        monkeypatch.setattr(jobs, "MAX_FINISHED_KEPT", 2)
+        fake = _FakeRun()
+        fake.release.set()
+        runner = JobRunner(max_jobs=1, runner=fake)
+        done = []
+        for _ in range(4):
+            job = runner.submit(CFG, create_run())
+            job.future.result(timeout=5)
+            done.append(job)
+        fake.release.clear()
+        active = runner.submit(CFG, create_run())
+        fake.started.acquire(timeout=5)
+        kept = [j.run_id for j in done if runner.get(j.run_id)]
+        # Two finished jobs were already remembered when the fifth was submitted.
+        assert kept == [done[2].run_id, done[3].run_id]
+        assert runner.get(active.run_id) is active
+        runner.shutdown()
+
+    def test_exit_cancels_running_jobs(self, tmp_path):
+        # At interpreter exit, a running job is cancelled instead of being waited for.
+        import subprocess
+        import sys
+
+        marker = tmp_path / "outcome"
+        code = (
+            "import pathlib, sys, threading\n"
+            "from config import DistillationConfig\n"
+            "from pipeline import jobs\n"
+            "from pipeline.runs import RunCancelled, create_run\n"
+            "started = threading.Event()\n"
+            "def run(cfg, source, progress, *, run, cancel, owner):\n"
+            "    started.set()\n"
+            "    if cancel.wait(60):\n"
+            "        pathlib.Path(sys.argv[1]).write_text('cancelled')\n"
+            "        raise RunCancelled()\n"
+            "    pathlib.Path(sys.argv[1]).write_text('ran to the end')\n"
+            "jobs._runner = jobs.JobRunner(max_jobs=1, runner=run)\n"
+            "jobs._register_shutdown()\n"
+            "cfg = DistillationConfig(teacher_model='m', base_url='http://localhost:8000/v1')\n"
+            "jobs._runner.submit(cfg, create_run())\n"
+            "started.wait(30)\n"
+        )
+        env = {**os.environ, "BRAINBREW_RUNS_DIR": str(runs_base())}
+        start = time.monotonic()
+        subprocess.run([sys.executable, "-c", code, str(marker)], env=env, check=True, timeout=60,
+                       cwd=Path(__file__).resolve().parent.parent)
+        assert marker.read_text() == "cancelled"
+        assert time.monotonic() - start < 30
 
 
 class TestRunState:
@@ -310,3 +372,40 @@ class TestVisibleRun:
 def test_version_matches_pyproject():
     data = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8"))
     assert data["project"]["version"] == __version__
+
+
+class TestServerHfToken:
+
+    @pytest.mark.parametrize(("repo", "namespace", "login", "allowed"), [
+        ("anyone/data", "", False, True),        # single user: the visitor is the operator
+        ("ops/data", "ops", True, True),
+        ("victim/data", "ops", True, False),
+        ("opsx/data", "ops", True, False),       # prefix must be the whole namespace
+        ("ops/data", "", True, False),           # no namespace configured: never with login
+        (None, "ops", True, False),
+    ])
+    def test_scope(self, repo, namespace, login, allowed):
+        from ui.common import server_hf_token_allowed
+
+        assert server_hf_token_allowed(repo, namespace, login) is allowed
+
+
+class TestCustomEndpoints:
+
+    @pytest.mark.parametrize(("flag", "login", "allowed"), [
+        (None, None, True),          # single user: the visitor is the operator
+        (None, "1", False),          # shared server: fail closed
+        ("1", "1", True),            # operator opted in
+        ("0", None, False),
+        ("false", None, False),
+        ("yes", "1", True),
+    ])
+    def test_default_depends_on_login(self, monkeypatch, flag, login, allowed):
+        from ui.common import custom_endpoints_allowed
+
+        for var, value in (("BRAINBREW_ALLOW_CUSTOM_ENDPOINTS", flag), ("BRAINBREW_REQUIRE_LOGIN", login)):
+            if value is None:
+                monkeypatch.delenv(var, raising=False)
+            else:
+                monkeypatch.setenv(var, value)
+        assert custom_endpoints_allowed() is allowed

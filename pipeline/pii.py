@@ -25,7 +25,6 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 UrlPolicy = Literal["domain", "redact", "keep"]
-URL_POLICIES: tuple[UrlPolicy, ...] = ("domain", "redact", "keep")
 
 # Cheap pre-check: every detector needs one of these.
 _CANDIDATE_RE = re.compile(r'[@0-9+]|http|www\.', re.IGNORECASE)

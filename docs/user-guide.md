@@ -5,7 +5,8 @@
 **Model endpoint** (sidebar). OpenAI, a local vLLM server (`localhost:8000`),
 Ollama (`localhost:11434`) or a custom URL. Local servers need no key. An
 operator can preset the endpoint with `OPENAI_BASE_URL` and lock it with
-`BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0`.
+`BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0`. With login on, it is locked unless the
+operator sets that variable to `1`.
 
 **Teacher model(s).** The model name as the endpoint knows it. Separate several
 with commas for an ensemble: chunks are spread across them.

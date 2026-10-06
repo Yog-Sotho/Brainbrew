@@ -27,7 +27,14 @@ from pipeline.service import new_run, read_documents
 from pipeline.synth import PAIRS_PER_CHUNK_ESTIMATE
 from pipeline.version import __version__
 from publish.dataset_card import LICENSES
-from ui.common import current_owner, setup_page, visible_run
+from ui.common import (
+    current_owner,
+    custom_endpoints_allowed,
+    login_required,
+    server_hf_token_allowed,
+    setup_page,
+    visible_run,
+)
 from ui.results import render_run
 
 setup_page("Generate")
@@ -46,7 +53,7 @@ st.caption("Grounded synthetic dataset generator for any OpenAI-compatible model
 # be redirected to a URL the visitor controls.
 SERVER_BASE_URL: str | None = os.getenv("OPENAI_BASE_URL", "").strip() or None
 DEFAULT_MODEL = os.getenv("BRAINBREW_DEFAULT_MODEL", "").strip() or "gpt-4o-mini"
-ALLOW_CUSTOM_ENDPOINTS = os.getenv("BRAINBREW_ALLOW_CUSTOM_ENDPOINTS", "1").strip().lower() not in {"0", "false", "no"}
+ALLOW_CUSTOM_ENDPOINTS = custom_endpoints_allowed()
 _CUSTOM = "custom"
 _URL_POLICY_LABELS = {
     "domain": "Keep the site, drop the path",
@@ -365,6 +372,21 @@ else:
 if ENDPOINTS[endpoint_label] == _CUSTOM and not base_url:
     validation_errors.append("Enter the endpoint URL.")
 
+# The server's HF token. With login on, several people share the app, so the
+# server token may only publish into the operator's namespace (HF_USERNAME);
+# anything else needs the user's own token. Otherwise any user could overwrite
+# any repo the server token can write to.
+server_hf_token: str | None = None
+if publish and not hf_token and hf_env_token:
+    namespace = os.getenv("HF_USERNAME", "").strip()
+    if server_hf_token_allowed(hf_repo_name, namespace, login_required()):
+        server_hf_token = hf_env_token
+    else:
+        validation_errors.append(
+            f"The server's Hugging Face token can only publish to {namespace or 'the operator'}'s repos. "
+            "Enter your own token to publish elsewhere."
+        )
+
 cfg: DistillationConfig | None = None
 try:
     cfg = DistillationConfig(
@@ -386,7 +408,7 @@ try:
         dataset_license=dataset_license,
         publish_adapter=publish_adapter,
         api_key=openai_key or (openai_env_key if use_server_key else None),
-        hf_token=hf_token or os.getenv("HF_TOKEN"),
+        hf_token=hf_token or server_hf_token,
         temperature=temperature,
         max_new_tokens=max_new_tokens,
         concurrency=concurrency,

@@ -7,7 +7,9 @@ QUALITY_MODE_LABELS (friendly display names for the Streamlit UI), and OutputFor
 """
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -60,7 +62,33 @@ def check_base_url(url: str) -> str:
         raise ValueError("Endpoint URL must not contain credentials; use the API key field.")
     if parts.query or parts.fragment:
         raise ValueError("Endpoint URL must not contain a query string or fragment.")
+    if _is_metadata_host(parts.hostname):
+        raise ValueError("Endpoint URL points at a link-local or cloud metadata address, which is not allowed.")
     return url
+
+
+# Cloud instance-metadata services: an endpoint here would let a visitor make the
+# server read its own cloud credentials (SSRF).
+_METADATA_HOSTS = {"metadata.google.internal", "metadata.goog", "metadata.azure.com", "instance-data"}
+
+
+def _is_metadata_host(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    if host in _METADATA_HOSTS:
+        return True
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # The resolver also takes legacy IPv4 spellings ("2852039166", "0xa9fea9fe", "169.254.43518").
+        try:
+            ip = ipaddress.IPv4Address(socket.inet_aton(host))
+        except OSError:
+            return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    # 169.254.0.0/16 and fe80::/10 (link-local, incl. 169.254.169.254) and AWS's fd00:ec2::254.
+    return ip.is_link_local or ip == ipaddress.ip_address("fd00:ec2::254")
 
 
 def check_hf_repo_name(name: str) -> str:

@@ -290,3 +290,44 @@ class TestInputValidationSecurity:
 
         with pytest.raises(ValueError, match="Invalid run id"):
             open_run(run_id)
+
+
+# ---------------------------------------------------------------------------
+# Endpoint URLs cannot reach cloud metadata services (SSRF)
+# ---------------------------------------------------------------------------
+
+class TestEndpointSsrf:
+
+    @pytest.mark.parametrize("url", [
+        "http://169.254.169.254/latest",
+        "http://169.254.169.254:80/v1",
+        "http://2852039166/v1",            # 169.254.169.254 as one number
+        "http://0xa9fea9fe/v1",            # ... in hex
+        "http://169.254.43518/v1",         # ... in the short dotted form
+        "http://[::ffff:169.254.169.254]/v1",
+        "http://[fe80::1]/v1",
+        "http://[fd00:ec2::254]/v1",
+        "http://metadata.google.internal/v1",
+        "http://METADATA.google.internal./v1",
+        "http://metadata.azure.com/v1",
+    ])
+    def test_metadata_addresses_are_rejected(self, url):
+        from pydantic import ValidationError
+
+        from config import DistillationConfig, check_base_url
+        with pytest.raises(ValueError, match="link-local or cloud metadata"):
+            check_base_url(url)
+        with pytest.raises(ValidationError, match="link-local or cloud metadata"):
+            DistillationConfig(teacher_model="m", base_url=url)
+
+    @pytest.mark.parametrize("url", [
+        "http://localhost:8000/v1",
+        "http://127.0.0.1:11434/v1",
+        "http://10.0.0.5:8000/v1",
+        "http://vllm:8000/v1",
+        "https://api.openai.com/v1",
+        "http://[::1]:8000/v1",
+    ])
+    def test_ordinary_endpoints_are_allowed(self, url):
+        from config import check_base_url
+        assert check_base_url(url) == url

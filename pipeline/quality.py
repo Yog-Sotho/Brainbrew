@@ -10,8 +10,6 @@ from typing import TypedDict
 
 from pipeline.records import Record
 
-GRADES: tuple[str, ...] = ("SUPER", "GOOD", "NORMAL", "BAD", "DISASTER")
-
 _QUALITY_THRESHOLDS: dict[str, dict[str, float]] = {
     "SUPER":  {"min_records": 100, "min_avg_len": 300, "min_unique_ratio": 0.95},
     "GOOD":   {"min_records": 50,  "min_avg_len": 200, "min_unique_ratio": 0.85},

@@ -76,3 +76,29 @@ def visible_run(run_id: str) -> RunDir | None:
     if login_required() and run.read_manifest().get("owner") != current_owner():
         return None
     return run
+
+
+def server_hf_token_allowed(repo: str | None, namespace: str, login_on: bool) -> bool:
+    """May the server's HF token publish to *repo*?
+
+    In single-user mode (no login) the visitor is the operator. With login on,
+    only repos in the operator's namespace (HF_USERNAME) qualify, so one user
+    cannot use the server token to overwrite repos it can write to elsewhere.
+    """
+    if not login_on:
+        return True
+    return bool(namespace) and bool(repo) and str(repo).startswith(f"{namespace}/")
+
+
+def custom_endpoints_allowed() -> bool:
+    """May visitors pick their own model endpoint?
+
+    BRAINBREW_ALLOW_CUSTOM_ENDPOINTS decides when it is set. When it is not set,
+    custom endpoints are on in single-user mode and off with login on: on a
+    shared server, a user-chosen URL makes the server send requests into its own
+    network (SSRF), so the operator has to opt in.
+    """
+    raw = os.getenv("BRAINBREW_ALLOW_CUSTOM_ENDPOINTS", "").strip().lower()
+    if raw:
+        return raw not in {"0", "false", "no"}
+    return not login_required()

@@ -166,7 +166,7 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/
 <ul>
   <li>The app listens on <strong>127.0.0.1</strong> by default (<code>.streamlit/config.toml</code>); the Docker examples publish the port on localhost only.</li>
   <li>API keys from <code>.env</code> stay on the server and are never sent to the browser. The sidebar only says a server key is configured.</li>
-  <li>The server's <code>OPENAI_API_KEY</code> is only ever sent to the server's own endpoint (<code>OPENAI_BASE_URL</code>, or OpenAI). If a visitor picks another endpoint, only a key they type themselves is used. Set <code>BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0</code> to lock the app to the server endpoint.</li>
+  <li>The server's <code>OPENAI_API_KEY</code> is only ever sent to the server's own endpoint (<code>OPENAI_BASE_URL</code>, or OpenAI). If a visitor picks another endpoint, only a key they type themselves is used. Set <code>BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0</code> to lock the app to the server endpoint. With login on, the endpoint is locked unless you set it to <code>1</code>; with login on, the server's <code>HF_TOKEN</code> only publishes to repos under <code>HF_USERNAME</code>.</li>
   <li>With login on, the gate runs on every page, and each user only sees their own runs (a run id in a URL is not enough to open someone else's).</li>
   <li>Before exposing Brainbrew to a network, turn on login: set <code>BRAINBREW_REQUIRE_LOGIN=1</code> and add an OIDC provider in <code>.streamlit/secrets.toml</code> (template: <code>.streamlit/secrets.toml.example</code>). Without that config the app refuses to start the UI.</li>
 </ul>
@@ -178,7 +178,7 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/
   <thead><tr><th>Variable</th><th>What it does</th></tr></thead>
   <tbody>
     <tr><td><code>OPENAI_BASE_URL</code> / <code>OPENAI_API_KEY</code></td><td>The server's own endpoint and key (the key is only ever sent to that endpoint)</td></tr>
-    <tr><td><code>BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0</code></td><td>Lock the app to the server endpoint</td></tr>
+    <tr><td><code>BRAINBREW_ALLOW_CUSTOM_ENDPOINTS</code></td><td><code>0</code> locks the app to the server endpoint, <code>1</code> lets visitors pick one. Default: allowed in single-user mode, locked with login on</td></tr>
     <tr><td><code>BRAINBREW_DEFAULT_MODEL</code></td><td>Pre-filled teacher model (UI and CLI)</td></tr>
     <tr><td><code>BRAINBREW_MAX_JOBS</code></td><td>Runs the web server executes at once (default 2); LoRA training always takes the machine's single GPU slot in turn, across the UI and the CLI</td></tr>
     <tr><td><code>BRAINBREW_RUNS_DIR</code></td><td>Where run folders go (default <code>./runs</code>)</td></tr>

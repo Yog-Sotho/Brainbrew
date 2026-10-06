@@ -39,4 +39,5 @@ nav:
   - Changelog: changelog.md
   - Project:
       - Codebase audit: project/codebase_audit.md
+      - Baseline audit (v1.2.0): project/codebase_audit_baseline.md
       - Roadmap: project/sota_roadmap.md

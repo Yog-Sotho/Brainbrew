@@ -337,8 +337,9 @@ def _run(
         raise RuntimeError(
             "No usable question/answer pairs were produced "
             f"({stats.errors} failed requests, {stats.judge_rejected} rejected by the judge, "
-            f"{sum(stats.answers_filtered.values())} filtered answers). Check the model name, "
-            "API key / endpoint and the logs, then try again."
+            f"{sum(stats.answers_filtered.values())} filtered answers)"
+            + (f"; last error: {stats.last_error}" if stats.last_error else "")
+            + ". Check the model name, API key / endpoint and the logs, then try again."
         )
 
     # -- Stage 5: optional benchmark decontamination and sanitizing ----------

@@ -12,8 +12,15 @@
   another endpoint, only a key they typed themselves is sent. Otherwise a
   visitor could point the app at their own URL and receive the server's key.
   Operators can lock the endpoint with `BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0`.
+  With login on, it is locked unless the operator sets the variable to `1`:
+  on a shared server, a user-chosen URL makes the server send requests into its
+  own network.
 - The CLI reads secrets only from the environment and refuses config files that
   contain them.
+- With login on, the server's Hugging Face token only publishes to the
+  operator's own namespace (`HF_USERNAME`). Publishing anywhere else needs the
+  user's own token, so one user cannot write to another's repos with the
+  server's credentials.
 
 ## Network exposure
 
@@ -24,6 +31,12 @@
   configure an OIDC provider under `[auth]` in `.streamlit/secrets.toml`. The
   gate runs on every page, and without the configuration the app refuses to
   start the UI (fail closed).
+- Endpoint URLs that point at link-local or cloud metadata addresses
+  (`169.254.169.254`, `fd00:ec2::254`, `metadata.google.internal` and similar)
+  are rejected. The check looks at the URL, not at DNS answers: a host name that
+  later resolves to such an address is not caught. On cloud machines, keep the
+  endpoint locked (`BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0`) or block the metadata address
+  in the container's network policy.
 - With login on, each user sees only their own runs. A run id in a URL is not
   enough to open someone else's documents or dataset.
 
