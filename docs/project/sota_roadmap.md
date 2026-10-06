@@ -155,6 +155,24 @@ Each of these is supported by current practice (see Sources in the audit):
 
 **Gate:** two concurrent UI sessions plus a CLI run complete without GPU OOM or file clobbering; a page refresh does not lose a running job; the manifest is present for every run.
 
+### Phase 3 status (2026-10-06): done
+
+| # | Result |
+|---|---|
+| 3.1 | `pipeline/jobs.py`: a process-wide thread-pool runner (`BRAINBREW_MAX_JOBS`, default 2). The run id goes into the URL (`?run=`), so a reload or another tab re-attaches; `ui/results.py` polls with `@st.fragment(run_every=2)` and offers Cancel, which also cancels in-flight model requests. Training holds the machine's single GPU slot (`pipeline/gpu.py`, a file lock shared by the web server and the CLI). `pages/1_Run_history.py` lists runs with live status ("running elsewhere" for another process, "interrupted" when the owning process is gone), results, details and downloads. With login on, the gate runs on every page and users only see their own runs. |
+| 3.2 | `pipeline/logs.py` configures structlog + stdlib once (JSON in containers or with `BRAINBREW_LOG_FORMAT=json`) and copies each run's lines to `runs/<id>/run.log`. The manifest records version, models, seed (sent with every request), token usage and actual cost (`pipeline/pricing.py`), stage timings, progress, process and owner; `rejected.jsonl` keeps rejected pairs. |
+| 3.3 | `publish/dataset_card.py` builds the dataset card from the manifest (provenance, models, seed, settings, every filter count, quality, example record, license; source names never published, a SHA-256 instead). It is uploaded before the data, and `datasets.push_to_hub` merges its metadata into it. Repos are private unless *Make it public* is ticked; the LoRA adapter can be published as a model repo with a model card. |
+| 3.4 | `cli.py` (`brainbrew` console script, Typer): `run` with a YAML/JSON config plus options, progress bar, Ctrl-C cancel and exit codes 0/1/2/130; `runs list` / `runs show`. Secrets only from the environment; configs containing them are refused. |
+
+**Gate: met.** Against the real `streamlit run app.py` server and the test suite's fake model served over HTTP (3 s per request), two headless-Chromium sessions and a `brainbrew run` in a third process generated at the same time from three different documents. All three runs succeeded at their exact targets (15, 20, 18), each with a manifest, its own source and only its own document's content, its own log lines, and no leftover temporary files. Reloading session A mid-run brought back the same running job; the history page showed all three, the CLI one as "running elsewhere". There is no GPU here, so OOM itself could not be provoked; a test shows the GPU slot excludes a holder in another process, which is what prevents two trainings from sharing the GPU.
+
+**Found during Phase 3:**
+
+- The log handler kept the `sys.stderr` object it was created with; after the host replaced stderr (pytest does), every log call raised "I/O operation on closed file". It now resolves `sys.stderr` on each write.
+- A quiet CLI (`WARNING` console) produced empty run logs, because the console level was set on the root logger. The console handler now filters on its own; the root stays at INFO.
+- `setuptools` did not package `engine/` (added in Phase 2), so a non-editable install would have missed it.
+- In an 80-column terminal the run table truncated run ids, the value users copy into `runs show`; the id column no longer wraps.
+
 ## Phase 4: Hardening and polish (about 3–5 days)
 
 - `mypy --strict` on `config`, `pipeline/` and `engine/`; ruff with the `S` (bandit), `PT` and `RUF` rule sets; pre-commit.

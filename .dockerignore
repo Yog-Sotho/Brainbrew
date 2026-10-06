@@ -6,6 +6,7 @@
 !pyproject.toml
 !uv.lock
 !app.py
+!cli.py
 !config.py
 !orchestrator.py
 !engine/

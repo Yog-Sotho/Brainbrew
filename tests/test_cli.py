@@ -83,6 +83,7 @@ class TestRun:
         run_id = next(line.split()[1] for line in res.output.splitlines() if line.startswith("Run "))
         manifest = open_run(run_id).read_manifest()
         assert manifest["config"]["dataset_size"] == 11 and manifest["config"]["quality_mode"] == "fast"
+        assert open_run(run_id).log.read_text(encoding="utf-8").count('"run_id"') >= 3  # quiet console, full run log
         assert len(read_records(open_run(run_id).records)) == 11
 
     def test_key_comes_from_the_environment_only(self, doc, monkeypatch):

@@ -92,8 +92,12 @@ def configure_logging(level: str | None = None, fmt: str | None = None, *, force
         root = logging.getLogger()
         for old in [h for h in root.handlers if h.get_name() == _HANDLER_NAME]:
             root.removeHandler(old)
+        # The console shows the requested level; the root stays at INFO or lower so
+        # per-run logs (run_log) always keep the run's INFO lines.
+        console_level = logging.getLevelName((level or os.getenv(LEVEL_ENV) or "INFO").upper())
+        handler.setLevel(console_level)
         root.addHandler(handler)
-        root.setLevel((level or os.getenv(LEVEL_ENV) or "INFO").upper())
+        root.setLevel(min(console_level, logging.INFO))
         for name in _NOISY:
             logging.getLogger(name).setLevel(logging.WARNING)
         _configured = True
@@ -115,6 +119,7 @@ def run_log(log_path: Path, run_id: str) -> Iterator[None]:
     """Bind run_id for this thread's logs and copy them to *log_path* (JSON lines)."""
     configure_logging()
     handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setLevel(logging.INFO)
     handler.setFormatter(_formatter(json_lines=True))
     handler.addFilter(_RunFilter(run_id))
     root = logging.getLogger()
