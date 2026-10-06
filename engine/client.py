@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx2
+import structlog
 from openai import (
     APIStatusError,
     AsyncOpenAI,
@@ -43,6 +45,8 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
 from engine.netguard import guard_client
 
+logger = structlog.get_logger(__name__)
+
 OPENAI_URL = "https://api.openai.com/v1"
 
 
@@ -59,26 +63,83 @@ _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 # no retry and no other chunk can fix these, so a run stops at the first one.
 FATAL_ERRORS = (AuthenticationError, PermissionDeniedError, NotFoundError)
 _QUOTA_CODES = {"insufficient_quota", "credit_balance_exhausted", "billing_hard_limit_reached"}
+# Longest wait a request sits out before retrying. A provider asking for longer
+# (a daily quota) means no request will get through in this run.
+MAX_RETRY_WAIT_S = 60.0
+_RETRY_IN_RE = re.compile(r"(?:retry|try again) in (?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?", re.IGNORECASE)
+_RETRY_DELAY_RE = re.compile(r'"retryDelay"\s*:\s*"([\d.]+)s"')
+
+
+def retry_delay_s(text: str) -> float | None:
+    """The wait a rate-limit reply asks for, from its message ("Please retry in 9h4m18s",
+    Gemini) or a retryDelay field; None if it names none."""
+    if m := _RETRY_DELAY_RE.search(text):
+        return float(m.group(1))
+    m = _RETRY_IN_RE.search(text)
+    if not m or not any(m.groups()):
+        return None
+    hours, minutes, seconds = (float(g) if g else 0.0 for g in m.groups())
+    return hours * 3600 + minutes * 60 + seconds
 
 
 def is_fatal_error(exc: BaseException) -> bool:
     """True for errors that every further request would hit too.
 
-    Running out of credits arrives as a 429 like an ordinary rate limit, but
-    waiting does not help, so it is told apart by its error code.
+    Running out of credits, or a quota that resets only after a long wait (a
+    daily limit), arrive as a 429 like an ordinary rate limit; waiting within the
+    run does not help, so they are told apart by their code or requested delay.
     """
     if isinstance(exc, FATAL_ERRORS):
         return True
-    return isinstance(exc, RateLimitError) and bool({exc.code, exc.type} & _QUOTA_CODES)
+    if not isinstance(exc, RateLimitError):
+        return False
+    if {exc.code, exc.type} & _QUOTA_CODES:
+        return True
+    delay = retry_delay_s(str(exc))
+    return delay is not None and delay > MAX_RETRY_WAIT_S
 
 
-async def _no_retry_without_credits(response: httpx2.Response) -> None:
-    """The SDK retries every 429 with backoff. For "no credits left" waiting does not
-    help, so tell it not to (it obeys the x-should-retry header)."""
-    if response.status_code == 429:
-        await response.aread()
-        if any(code in response.text for code in _QUOTA_CODES):
-            response.headers["x-should-retry"] = "false"
+async def _tune_rate_limit_retries(response: httpx2.Response) -> None:
+    """Make the SDK's retries of a 429 follow what the provider says.
+
+    - No credits, or a wait longer than MAX_RETRY_WAIT_S: do not retry (the SDK obeys
+      x-should-retry).
+    - A shorter wait named only in the body (Gemini): pass it on as Retry-After, which
+      the SDK honours, instead of its default backoff of a few seconds.
+    """
+    if response.status_code != 429:
+        return
+    await response.aread()
+    text = response.text
+    if any(code in text for code in _QUOTA_CODES):
+        response.headers["x-should-retry"] = "false"
+        return
+    delay = retry_delay_s(text)
+    if delay is None:
+        return
+    if delay > MAX_RETRY_WAIT_S:
+        response.headers["x-should-retry"] = "false"
+    elif "retry-after" not in response.headers:
+        response.headers["retry-after"] = str(math.ceil(delay))
+
+
+_SYSTEM_REJECTED_RE = re.compile(
+    r"developer instruction|system (?:instruction|role|message|prompt)s?\b.{0,40}(?:not|unsupported|enabled)",
+    re.IGNORECASE,
+)
+
+
+def fold_system_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """The same conversation without system messages: their text leads the first user turn."""
+    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+    rest = [dict(m) for m in messages if m["role"] != "system"]
+    if not system:
+        return rest
+    for m in rest:
+        if m["role"] == "user":
+            m["content"] = f"{system}\n\n{m['content']}"
+            return rest
+    return [{"role": "user", "content": system}, *rest]
 
 
 class StructuredOutputError(RuntimeError):
@@ -98,6 +159,9 @@ class EndpointSettings:
     max_retries: int = 4
     concurrency: int = 8
     seed: int | None = None  # sent with every chat request when set (reproducible sampling)
+    # "none" turns thinking off where a server supports it (e.g. Gemini 2.5 Flash, whose
+    # thinking otherwise uses up the answer's token budget); None leaves the server default.
+    reasoning_effort: str | None = None
 
     def __repr__(self) -> str:
         return (f"EndpointSettings(model={self.model!r}, base_url={self.base_url!r}, "
@@ -126,6 +190,8 @@ class _Capabilities:
     """What the server accepted for structured output (learned on first use)."""
 
     response_format: str = "json_schema"  # -> "json_object" -> "prompt"
+    send_seed: bool = True                 # False once the server rejected the seed field
+    send_system: bool = True               # False once it rejected system messages (folded into the user turn)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -170,7 +236,7 @@ class ChatClient:
         # Refuse metadata addresses after DNS resolution and on redirects (SSRF).
         http = guard_client(http_client or DefaultAsyncHttpxClient())
         hooks = http.event_hooks
-        http.event_hooks = {**hooks, "response": [*hooks.get("response", []), _no_retry_without_credits]}
+        http.event_hooks = {**hooks, "response": [*hooks.get("response", []), _tune_rate_limit_retries]}
         self._client = AsyncOpenAI(
             api_key=settings.api_key or "not-needed",
             base_url=settings.base_url or default_base_url(),
@@ -209,6 +275,8 @@ class ChatClient:
         response_format: dict[str, Any] | None,
     ) -> str:
         """One request; the caller holds the concurrency semaphore."""
+        if not self._caps.send_system:
+            messages = fold_system_messages(messages)
         kwargs: dict[str, Any] = {
             "model": self.settings.model,
             "messages": messages,
@@ -217,9 +285,35 @@ class ChatClient:
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
-        if self.settings.seed is not None:
+        if self.settings.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.settings.reasoning_effort
+        send_seed = self.settings.seed is not None and self._caps.send_seed
+        if send_seed:
             kwargs["seed"] = self.settings.seed
-        completion = await self._client.chat.completions.create(**kwargs)
+        while True:
+            try:
+                completion = await self._client.chat.completions.create(**kwargs)
+                break
+            except (BadRequestError, UnprocessableEntityError) as exc:
+                # Some OpenAI-compatible servers reject the seed field or system
+                # messages (Gemma on Google's API). Adapt once and remember, rather than
+                # failing every request. Handled here, so the structured-output fallback
+                # does not mistake it for an unsupported response_format.
+                text = str(exc)
+                if "seed" in kwargs and "seed" in text.lower():
+                    if self._caps.send_seed:
+                        self._caps.send_seed = False
+                        logger.warning("The server rejected the seed; sampling without one",
+                                       model=self.settings.model)
+                    kwargs.pop("seed")
+                elif _SYSTEM_REJECTED_RE.search(text) and any(m["role"] == "system" for m in kwargs["messages"]):
+                    if self._caps.send_system:
+                        self._caps.send_system = False
+                        logger.warning("The server rejected system messages; sending them in the user turn",
+                                       model=self.settings.model)
+                    kwargs["messages"] = fold_system_messages(kwargs["messages"])
+                else:
+                    raise
         self.usage.add(completion.usage)
         if not completion.choices:
             return ""

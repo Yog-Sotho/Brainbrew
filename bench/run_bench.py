@@ -153,6 +153,7 @@ def bench_document(
         concurrency=args.concurrency,
         request_timeout=args.timeout,
         max_new_tokens=args.max_tokens,
+        reasoning_effort=args.reasoning_effort,
     )
     start = time.perf_counter()
     with tempfile.TemporaryDirectory() as tmp:
@@ -178,7 +179,7 @@ def bench_document(
     judge_settings = EndpointSettings(
         model=args.judge_model or args.model.split(",")[0].strip(), base_url=args.base_url,
         api_key=os.getenv("OPENAI_API_KEY") or None, temperature=0.0, max_tokens=512,
-        timeout_s=float(args.timeout), concurrency=args.concurrency,
+        timeout_s=float(args.timeout), concurrency=args.concurrency, reasoning_effort=args.reasoning_effort,
     )
 
     async def _judge() -> tuple[list[int], int]:
@@ -224,6 +225,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--concurrency", type=int, default=8)
     p.add_argument("--timeout", type=int, default=120)
     p.add_argument("--max-tokens", type=int, default=1024)
+    p.add_argument("--reasoning-effort", default=None, choices=["none", "minimal", "low", "medium", "high"],
+                   help="Thinking effort for models that think ('none' for Gemini 2.5 Flash); default: the server's")
     p.add_argument("--fixtures", type=Path, default=FIXTURES)
     p.add_argument("--out", type=Path, default=Path("bench-report.json"))
     return p.parse_args(argv)
@@ -243,7 +246,7 @@ def main(argv: list[str] | None = None, make_client: Callable[[EndpointSettings]
         results.append(res)
         if res.fatal:
             print("Stopped: the endpoint refused the key, the access or the model, or the account has no "
-                  "credits, so every other document would fail the same way.", file=sys.stderr, flush=True)
+                  "credits or quota left, so every other document would fail the same way.", file=sys.stderr, flush=True)
             break
 
     report = {

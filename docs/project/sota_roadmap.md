@@ -136,6 +136,19 @@ Each of these is supported by current practice (see Sources in the audit):
 
 **Gate machinery.** `tests/fixtures/bench/` holds three public-domain PDFs rebuilt by `bench/make_fixtures.py` (Federalist No. 10, ch. II of *The Elements of Style*, ch. III of *On the Origin of Species*: argument, procedural rules, scientific exposition). `bench/run_bench.py` runs the real pipeline on each and checks the gate per document: faithfulness from an independent judge pass over the final records, question-level near-duplicate rate (MinHash ≥ 0.8), refusal rate and yield. `.github/workflows/bench.yml` runs it nightly with `gpt-4o-mini` when the `OPENAI_API_KEY` secret is set (otherwise it skips with a notice); `tests/test_bench.py` runs the same script offline in CI.
 
+**Gate: met on 2026-10-06.** The benchmark ran in CI on Google's free tier with `gemma-4-31b-it` as both teacher and judge ([run 37500325411](https://github.com/Yog-Sotho/Brainbrew/actions/runs/37500325411); 399 requests, 1 h 36 min):
+
+| Document | Pairs / target | Faithfulness | Near-duplicates | Refusals |
+|---|---|---|---|---|
+| Elements of Style | 15 / 15 | 5.00 | 0.0% | 0.0% |
+| Federalist No. 10 | 25 / 25 | 5.00 | 0.0% | 0.0% |
+| Origin of Species | 40 / 40 | 5.00 | 0.0% | 0.0% |
+
+Caveats:
+
+- The same model wrote and graded the pairs, and a uniform 5.00 suggests a lenient judge. An independent judge (`BENCH_JUDGE_MODEL`) would make the faithfulness score stronger evidence.
+- The judge pass failed on 4 of 80 records (judge errors, not low scores).
+
 **Found while testing against a real server (not in the audit):**
 
 - llama-cpp-python's server rejects `response_format: json_schema` with **500**, not 400/422, so the fallback never triggered and every structured call failed. A 5xx that names `response_format` now degrades too; any other 5xx is still an outage.

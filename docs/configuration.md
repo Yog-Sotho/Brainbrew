@@ -28,7 +28,8 @@ This page is checked against the model by `tests/test_docs.py`.
 | `max_new_tokens` | `int` | `2048` | ≥ 128 ≤ 32768 | Maximum tokens per answer. |
 | `concurrency` | `int` | `8` | ≥ 1 ≤ 64 | Parallel requests per model client. Use 1-2 for slow CPU servers. |
 | `request_timeout` | `int` | `120` | ≥ 10 ≤ 1800 | Seconds before a request is retried. |
-| `seed` | `int \| None` | `None` | ≥ 0 ≤ 2147483647 | Sampling seed sent with every request. Unset: a random seed is chosen and recorded. |
+| `seed` | `int \| None` | `None` | ≥ 0 ≤ 2147483647 | Sampling seed sent with every request. Unset: a random seed is chosen and recorded. A server that rejects the field gets requests without it (logged). |
+| `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high` or `None` | `None` | | Thinking effort for models that think. `none` turns thinking off where the server allows it (Gemini 2.5 Flash), so it does not use up the answer's token budget. Unset: the server's default. |
 | `lora_rank` | `int` | `16` | ≥ 4 ≤ 256 | LoRA rank `r` (alpha is set equal). |
 | `api_key` | `str \| None` | `None` |  | Key for the endpoint. Never written to manifests or logs. CLI: environment only. |
 | `hf_token` | `str \| None` | `None` |  | Hugging Face write token. Same rules as `api_key`. |

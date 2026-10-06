@@ -271,3 +271,180 @@ class TestFatalErrors:
         with pytest.raises(Exception, match="429"):
             asyncio.run(call())
         assert len(seen) == attempts
+
+
+class TestRequestFields:
+
+    @staticmethod
+    def _client(reply, **settings):
+        defaults = {"model": "m", "base_url": "http://x/v1", "max_retries": 0}
+        return ChatClient(EndpointSettings(**{**defaults, **settings}),
+                          http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+
+    @staticmethod
+    def _ok(content: str = "fine"):
+        return httpx2.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": content}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    @pytest.mark.parametrize("effort", ["none", None])
+    def test_reasoning_effort_only_when_set(self, effort):
+        import asyncio
+        import json
+
+        bodies = []
+
+        def reply(request):
+            bodies.append(json.loads(request.content))
+            return self._ok()
+
+        asyncio.run(self._client(reply, reasoning_effort=effort).chat([{"role": "user", "content": "hi"}]))
+        assert bodies[0].get("reasoning_effort") == effort
+        assert ("reasoning_effort" in bodies[0]) is (effort is not None)
+
+    def test_a_rejected_seed_is_dropped_once_and_remembered(self):
+        # Some OpenAI-compatible servers reject the seed field: sample without it
+        # instead of failing every request, and keep the JSON mode as it was.
+        import asyncio
+        import json
+
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            text: str
+
+        bodies = []
+
+        def reply(request):
+            body = json.loads(request.content)
+            bodies.append(body)
+            if "seed" in body:
+                return httpx2.Response(400, json={"error": {"message": 'Invalid JSON payload: Unknown name "seed"'}})
+            return self._ok('{"text": "ok"}')
+
+        client = self._client(reply, seed=7)
+
+        async def run():
+            first = await client.chat_json([{"role": "user", "content": "a"}], Answer)
+            second = await client.chat_json([{"role": "user", "content": "b"}], Answer)
+            return first, second
+
+        first, second = asyncio.run(run())
+        assert first.text == second.text == "ok"
+        assert ["seed" in b for b in bodies] == [True, False, False]   # one rejection, then never again
+        assert all(b["response_format"]["type"] == "json_schema" for b in bodies)
+
+    def test_other_bad_requests_are_not_retried_without_seed(self):
+        import asyncio
+
+        seen = []
+
+        def reply(request):
+            seen.append(1)
+            return httpx2.Response(400, json={"error": {"message": "context length exceeded"}})
+
+        with pytest.raises(Exception, match="context length"):
+            asyncio.run(self._client(reply, seed=7).chat([{"role": "user", "content": "hi"}]))
+        assert len(seen) == 1
+
+
+class TestRetryDelays:
+    """Rate limits that name their wait: short ones are waited out, long ones stop the run."""
+
+    @pytest.mark.parametrize(("text", "seconds"), [
+        ("Please retry in 36.5s.", 36.5),
+        ("Quota exceeded ... Please retry in 9h4m18.1s.", 9 * 3600 + 4 * 60 + 18.1),
+        ("Please try again in 20s.", 20.0),
+        ("retry in 2m", 120.0),
+        ('{"retryDelay": "17s"}', 17.0),
+        ("Rate limit reached.", None),
+        ("retry in 500ms", None),
+    ])
+    def test_retry_delay(self, text, seconds):
+        from engine.client import retry_delay_s
+
+        assert retry_delay_s(text) == (pytest.approx(seconds) if seconds is not None else None)
+
+    @staticmethod
+    def _attempts(message: str, max_retries: int = 1):
+        import asyncio
+
+        seen = []
+
+        def reply(request):
+            seen.append(1)
+            return httpx2.Response(429, json=[{"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED"}}])
+
+        async def call():
+            settings = EndpointSettings(model="m", base_url="http://x/v1", max_retries=max_retries)
+            client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+            await client.chat([{"role": "user", "content": "hi"}])
+
+        try:
+            asyncio.run(call())
+        except Exception as exc:
+            return len(seen), exc
+        raise AssertionError("no error raised")
+
+    def test_a_short_named_wait_is_retried_and_not_fatal(self):
+        import time
+
+        from engine.client import is_fatal_error
+
+        start = time.monotonic()
+        attempts, exc = self._attempts("Quota exceeded, limit: 5. Please retry in 0.2s.")
+        assert attempts == 2 and not is_fatal_error(exc)
+        assert time.monotonic() - start >= 0.9   # waited the Retry-After (rounded up to 1s)
+
+    def test_a_daily_quota_stops_at_once(self):
+        from engine.client import is_fatal_error
+
+        attempts, exc = self._attempts("Quota exceeded, limit: 20. Please retry in 9h4m18s.", max_retries=4)
+        assert attempts == 1 and is_fatal_error(exc)
+
+
+class TestSystemMessages:
+    """Servers that reject system messages (Gemma on Google's API) get them in the user turn."""
+
+    def test_fold(self):
+        from engine.client import fold_system_messages
+
+        msgs = [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello"}, {"role": "user", "content": "More"}]
+        assert fold_system_messages(msgs) == [{"role": "user", "content": "Be brief.\n\nHi"},
+                                              {"role": "assistant", "content": "Hello"},
+                                              {"role": "user", "content": "More"}]
+        assert msgs[1]["content"] == "Hi"   # the caller's messages are not changed
+        assert fold_system_messages([{"role": "system", "content": "S"}]) == [{"role": "user", "content": "S"}]
+
+    def test_rejection_is_learned_once(self):
+        import asyncio
+        import json
+
+        bodies = []
+
+        def reply(request):
+            body = json.loads(request.content)
+            bodies.append(body)
+            if any(m["role"] == "system" for m in body["messages"]):
+                return httpx2.Response(400, json=[{"error": {
+                    "code": 400, "message": "Developer instruction is not enabled for models/gemma-4-31b-it",
+                    "status": "INVALID_ARGUMENT"}}])
+            return httpx2.Response(200, json={
+                "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+                "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
+
+        settings = EndpointSettings(model="gemma", base_url="http://x/v1", max_retries=0, seed=3)
+        client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+        msgs = [{"role": "system", "content": "Rules."}, {"role": "user", "content": "Q"}]
+
+        async def run():
+            return [await client.chat(msgs), await client.chat(msgs)]
+
+        assert asyncio.run(run()) == ["ok", "ok"]
+        assert [any(m["role"] == "system" for m in b["messages"]) for b in bodies] == [True, False, False]
+        assert bodies[-1]["messages"] == [{"role": "user", "content": "Rules.\n\nQ"}]
+        assert all(b.get("seed") == 3 for b in bodies)   # the seed was not dropped by mistake

@@ -9,6 +9,21 @@ comments. The phases refer to
 ## [Unreleased]: Phase 4, hardening, and audit follow-ups
 
 ### Added
+- The benchmark workflow takes a model provider (`BENCH_PROVIDER`): `openai`,
+  `gemini` (free tier, secret `GEMINI_API_KEY`, `gemma-4-31b-it`: the only
+  model there whose free daily quota fits a run) or `custom` (any OpenAI-compatible endpoint). Each has its own key secret,
+  default model and parallel-request limit, and the key check works for all of
+  them.
+- `reasoning_effort` setting (config, CLI config files, `bench/run_bench.py
+  --reasoning-effort`): `none` turns thinking off where the server allows it, so
+  thinking does not use up the answer's token budget.
+- A server that rejects the `seed` field gets requests without it, and one that
+  rejects system messages (Gemma on Google's API) gets their text at the start
+  of the user turn. Each is learned once and logged, instead of failing every
+  request.
+- Rate limits that name their wait are followed: a short one (Gemini's "retry in
+  36s") becomes the retry delay, and one of hours (a used-up daily quota) stops
+  the run at once instead of retrying every request.
 - `mypy --strict` for the whole codebase (settings and file list in
   `pyproject.toml`; run `uv run mypy`); ruff's security (`S`),
   pytest (`PT`) and `RUF` rule sets; a pre-commit configuration that runs the
