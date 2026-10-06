@@ -37,12 +37,12 @@ if str(ROOT) not in sys.path:  # allow `python bench/run_bench.py` from anywhere
 
 from config import DistillationConfig, QualityMode  # noqa: E402
 from engine import ChatClient, EndpointSettings  # noqa: E402
+from engine.client import is_fatal_error  # noqa: E402
 from pipeline.dedup import Deduplicator, normalise  # noqa: E402
 from pipeline.document_loader import read_document, source_chunks  # noqa: E402
 from pipeline.filters import answer_problem  # noqa: E402
 from pipeline.prompts import JudgeScores, judge_messages  # noqa: E402
 from pipeline.records import Record, read_records  # noqa: E402
-from pipeline.synth import FATAL_ERRORS  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures" / "bench"
 # Targets sit well below what each document can support (about 6 pairs per chunk).
@@ -161,7 +161,7 @@ def bench_document(
         try:
             result = orchestrator.run_distillation(cfg, src, client_factory=make_client)
         except Exception as exc:  # report and move on to the next document
-            res.fatal = isinstance(exc, FATAL_ERRORS)
+            res.fatal = is_fatal_error(exc)
             res.error = f"{type(exc).__name__}: {exc}"
             res.failures = [f"run failed: {res.error}"]
             res.seconds = round(time.perf_counter() - start, 1)
@@ -242,8 +242,8 @@ def main(argv: list[str] | None = None, make_client: Callable[[EndpointSettings]
               + (f"  FAIL: {'; '.join(res.failures)}" if res.failures else "  ok"), flush=True)
         results.append(res)
         if res.fatal:
-            print("Stopped: the endpoint refused the key, the access or the model, so every other "
-                  "document would fail the same way.", file=sys.stderr, flush=True)
+            print("Stopped: the endpoint refused the key, the access or the model, or the account has no "
+                  "credits, so every other document would fail the same way.", file=sys.stderr, flush=True)
             break
 
     report = {

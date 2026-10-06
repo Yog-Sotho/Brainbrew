@@ -80,6 +80,18 @@ def test_fatal_error_stops_after_the_first_document(tmp_path, capsys):
     assert "every other document would fail" in capsys.readouterr().err
 
 
+def test_no_credits_stops_the_benchmark_at_once(tmp_path, capsys):
+    # 429 "no credits" looks like a rate limit but waiting does not help.
+    out = tmp_path / "report.json"
+    fake = FakeOpenAI(quota_exhausted=True)
+    make, _ = _factory(fake)
+    code = run_bench.main(["--model", "m", "--base-url", "http://fake/v1", "--scale", "0.4", "--out", str(out)],
+                          make_client=make)
+    (doc,) = json.loads(out.read_text(encoding="utf-8"))["documents"]
+    assert code == 1 and doc["fatal"] and "no credits" in doc["error"]
+    assert fake.count("quota") < 10  # no retries, and the run stopped instead of trying every chunk
+
+
 def test_ordinary_failures_do_not_stop_the_benchmark(tmp_path):
     out = tmp_path / "report.json"
     make, _ = _factory(FakeOpenAI(low_score_every=2))
