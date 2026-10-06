@@ -21,6 +21,11 @@ comments. The phases refer to
 - Markdown documentation in `docs/` with an MkDocs site (built strictly in CI),
   replacing the 13 PDF manuals.
 - This changelog.
+- `bench/downstream.py` and the [downstream evaluation](https://github.com/Yog-Sotho/Brainbrew/blob/main/docs/downstream-eval.md)
+  runbook: a held-out, closed-book exam written from the source documents (with
+  near-copies of training questions removed), LoRA training, and paired grading
+  of the base model, the Brainbrew adapter and a control adapter, with bootstrap
+  confidence intervals. Sized for one 8 GB GPU.
 - Running jobs are cancelled when the server shuts down, so they end as
   "cancelled" instead of holding the process open; finished jobs beyond the
   last 200 are dropped from memory (their run folders stay).

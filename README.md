@@ -307,6 +307,7 @@ uv run ruff check . &amp;&amp; uv run mypy</code></pre>
 <p><strong>Quality benchmark.</strong> <code>bench/run_bench.py</code> generates datasets from three public-domain PDFs in <code>tests/fixtures/bench/</code> and checks the generation gate: average judge faithfulness ≥ 4.0 (from an independent judge pass), near-duplicate rate &lt; 2 %, no refusals, and yield within 10 % of the target. <code>.github/workflows/bench.yml</code> runs it nightly with <code>gpt-4o-mini</code> when the <code>OPENAI_API_KEY</code> secret is set.</p>
 <pre><code>OPENAI_API_KEY=sk-... uv run python bench/run_bench.py --model gpt-4o-mini
 uv run python bench/run_bench.py --base-url http://localhost:8000/v1 --model Qwen/Qwen3-4B-Instruct-2507</code></pre>
+<p><strong>Downstream evaluation.</strong> <code>bench/downstream.py</code> tests whether a model trained on the data gets better. It writes a held-out, closed-book exam from your documents, trains LoRA adapters, then grades the base model, the Brainbrew adapter and a control adapter with confidence intervals. The procedure fits one 8 GB GPU; see <a href="docs/downstream-eval.md">docs/downstream-eval.md</a>.</p>
 
 <hr>
 

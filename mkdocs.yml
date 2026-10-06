@@ -34,6 +34,7 @@ nav:
   - Hardware: hardware.md
   - Troubleshooting: troubleshooting.md
   - Testing: testing.md
+  - Downstream evaluation: downstream-eval.md
   - Tech stack: tech-stack.md
   - Contributing: contributing.md
   - Changelog: changelog.md

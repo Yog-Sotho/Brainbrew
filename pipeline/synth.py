@@ -53,6 +53,22 @@ AVOID_LIST_SIZE = 40
 MAX_REJECTED_KEPT = 1000
 ERRORS_LOGGED = 5  # failed requests logged in full; later ones are only counted
 
+
+def describe_error(exc: BaseException, limit: int = 500) -> str:
+    """'Type: message', followed by its causes: SDK errors such as "Connection error."
+    hide the reason (DNS, TLS, refused) in the exception chain."""
+    parts: list[str] = []
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen and len(parts) < 4:
+        seen.add(id(cur))
+        text = f"{type(cur).__name__}: {cur}".strip().rstrip(":")
+        if not parts or text not in parts[-1]:
+            parts.append(text)
+        cur = cur.__cause__ or (None if cur.__suppress_context__ else cur.__context__)
+    return " <- ".join(parts)[:limit]
+
+
 # Errors that no retry or other chunk can fix: stop the whole run.
 FATAL_ERRORS = (AuthenticationError, PermissionDeniedError, NotFoundError)
 
@@ -238,7 +254,7 @@ class _Run:
     def _error(self, step: str, exc: Exception) -> None:
         """Count a failed request; log the first few in full and remember the last one."""
         self.stats.errors += 1
-        self.stats.last_error = f"{type(exc).__name__}: {exc}"[:500]
+        self.stats.last_error = describe_error(exc)
         if self.stats.errors <= ERRORS_LOGGED:
             logger.warning("Request failed", step=step, error=self.stats.last_error)
         elif self.stats.errors == ERRORS_LOGGED + 1:
