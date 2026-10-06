@@ -78,7 +78,7 @@ jobs:
             openai) base="https://api.openai.com/v1"; model="gpt-4o-mini"; key_var=OPENAI_API_KEY
                     concurrency=8; key_page="https://platform.openai.com/api-keys" ;;
             gemini) base="https://generativelanguage.googleapis.com/v1beta/openai"; model="gemini-2.5-flash"
-                    key_var=GEMINI_API_KEY; concurrency=2; effort="none"
+                    key_var=GEMINI_API_KEY; concurrency=2
                     key_page="https://aistudio.google.com/apikey" ;;
             custom) base="$BENCH_BASE_URL"; model=""; key_var=BENCH_API_KEY; concurrency=4; key_page=""
                     if [ -z "$base" ]; then
@@ -89,6 +89,10 @@ jobs:
                exit 1 ;;
           esac
           model="${BENCH_MODEL:-$model}"
+          # Gemini 2.5 can turn thinking off; Gemini 3 and later only go down to "minimal".
+          if [ "$BENCH_PROVIDER" = gemini ]; then
+            case "$model" in gemini-2.5*) effort="none" ;; *) effort="minimal" ;; esac
+          fi
           if [ -z "$model" ]; then
             echo "::error title=No model::Set the BENCH_MODEL repository variable or the workflow's model input."
             exit 1
@@ -135,6 +139,8 @@ jobs:
           if [ -n "$key" ]; then auth=(-H "Authorization: Bearer $key"); fi
           code=$(curl -sS -o "$body" -w '%{http_code}' --max-time 60 "${BASE%/}/chat/completions" \
             "${auth[@]}" -H "Content-Type: application/json" -d "$request")
+          message=$(jq -r '(if type == "array" then .[0] else . end) | .error.message? // empty' "$body" 2>/dev/null | head -c 400 || true)
+          if [ -n "$message" ]; then echo "Provider said ($code): $message"; fi
           replace="Create a new key${KEY_PAGE:+ at $KEY_PAGE} and replace the $KEY_VAR repository secret with the key alone (no quotes, spaces or line breaks)."
           case "$code" in
             200) echo "$BENCH_PROVIDER accepts the key and serves $model." ;;
@@ -149,6 +155,9 @@ jobs:
             403) echo "::error title=No access::The provider answered 403: this key has no access to $model."
                  exit 1 ;;
             404) echo "::error title=Unknown model::The provider does not serve '$model' to this key. Check BENCH_MODEL or the workflow's model input."
+                 echo "Models this key can use:"
+                 curl -sS --max-time 30 "${BASE%/}/models" "${auth[@]}" \
+                   | jq -r '.data[]?.id' 2>/dev/null | sed 's|^models/||' | sort | head -n 80 || true
                  exit 1 ;;
             429) if grep -qE 'insufficient_quota|credit_balance|billing' "$body"; then
                    echo "::error title=No credits::The account behind $KEY_VAR has no credits left. Add credits with the provider, or switch to a free provider (BENCH_PROVIDER=gemini)."
