@@ -59,7 +59,7 @@ CHAT_MODEL = "trl-internal-testing/tiny-Qwen3ForCausalLM-Instruct-2507"
 BASE_MODEL = "trl-internal-testing/tiny-GPTNeoXForCausalLM"
 
 
-@pytest.fixture()
+@pytest.fixture
 def records_file(tmp_path: Path) -> Path:
     path = tmp_path / "records.jsonl"
     write_records(path, [
@@ -70,7 +70,7 @@ def records_file(tmp_path: Path) -> Path:
     return path
 
 
-@pytest.fixture()
+@pytest.fixture
 def training_stack():
     for mod in ("torch", "transformers", "trl", "peft", "datasets"):
         pytest.importorskip(mod)

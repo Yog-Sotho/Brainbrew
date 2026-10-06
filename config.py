@@ -221,13 +221,13 @@ class DistillationConfig(BaseModel):
         return self
 
     # ── FIX C-01: safe serialisation that never leaks secrets ────────────
-    def safe_dict(self) -> dict:
+    def safe_dict(self) -> dict[str, Any]:
         """Return model_dump with api_key and hf_token redacted. Safe for logging / display."""
         d = self.model_dump(exclude_none=True)
         if "api_key" in d:
             d["api_key"] = "***REDACTED***"
         if "hf_token" in d:
-            d["hf_token"] = "***REDACTED***"
+            d["hf_token"] = "***REDACTED***"  # noqa: S105 - a placeholder, not a secret
         return d
 
     @property

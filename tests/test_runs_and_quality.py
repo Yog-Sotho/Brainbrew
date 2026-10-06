@@ -19,8 +19,8 @@ from pipeline.runs import RunDir, create_run, new_run_id, open_run, runs_base
 
 class TestRuns:
 
-    def test_runs_base_follows_env(self, _isolated_runs_dir):
-        assert runs_base() == _isolated_runs_dir
+    def test_runs_base_follows_env(self, isolated_runs_dir):
+        assert runs_base() == isolated_runs_dir
 
     def test_runs_base_default(self, monkeypatch):
         monkeypatch.delenv("BRAINBREW_RUNS_DIR")

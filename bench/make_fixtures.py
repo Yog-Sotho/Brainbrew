@@ -49,7 +49,7 @@ def fetch(gutenberg_id: int, attempts: int = 4) -> str:
     url = f"https://www.gutenberg.org/cache/epub/{gutenberg_id}/pg{gutenberg_id}.txt"
     for attempt in range(1, attempts + 1):
         try:
-            with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 - fixed https URL
+            with urllib.request.urlopen(url, timeout=60) as resp:
                 data: bytes = resp.read()
                 return data.decode("utf-8-sig").replace("\r\n", "\n")
         except OSError:

@@ -44,7 +44,7 @@ def _app(monkeypatch: pytest.MonkeyPatch, **env: str) -> AppTest:
     return app
 
 
-@pytest.fixture()
+@pytest.fixture
 def at(monkeypatch: pytest.MonkeyPatch) -> AppTest:
     return _app(monkeypatch)
 

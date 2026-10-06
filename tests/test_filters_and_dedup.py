@@ -18,7 +18,7 @@ from pipeline.records import Record
 
 class TestCleanQuestion:
 
-    @pytest.mark.parametrize("raw,clean", [
+    @pytest.mark.parametrize(("raw", "clean"), [
         ("What is photosynthesis?", "What is photosynthesis?"),
         ("Sure! Here's a more complex version of the prompt:\n\n### Prompt Rewritten\n\nHow do plants store energy?",
          "How do plants store energy?"),
@@ -54,7 +54,7 @@ class TestCleanQuestion:
 
 class TestAnswerProblem:
 
-    @pytest.mark.parametrize("answer,problem", [
+    @pytest.mark.parametrize(("answer", "problem"), [
         ("", "empty"),
         ("UNANSWERABLE", "unanswerable"),
         ("Too short.", "too short"),

@@ -262,7 +262,7 @@ class TestLogs:
         named = [h for h in logging.getLogger().handlers if h.get_name() == "brainbrew"]
         assert len(named) == 1
 
-    @pytest.mark.parametrize("fmt,expected", [("json", True), ("console", False)])
+    @pytest.mark.parametrize(("fmt", "expected"), [("json", True), ("console", False)])
     def test_format_choice(self, fmt, expected):
         assert logs.use_json(fmt) is expected
 

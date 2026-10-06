@@ -93,14 +93,14 @@ _install_heavy_stubs()
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def _isolated_runs_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def isolated_runs_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Every test writes run directories under its own tmp_path, never ./runs."""
     runs = tmp_path / "runs"
     monkeypatch.setenv("BRAINBREW_RUNS_DIR", str(runs))
     return runs
 
 
-@pytest.fixture()
+@pytest.fixture
 def tiny_text() -> str:
     """A minimal, realistic document text for chunking tests."""
     return (
@@ -112,7 +112,7 @@ def tiny_text() -> str:
     ) * 10  # ~500 chars * 10 = ~5000 chars
 
 
-@pytest.fixture()
+@pytest.fixture
 def large_text() -> str:
     """A large document text (>50 KB) to stress-test the chunker."""
     paragraph = (
@@ -123,7 +123,7 @@ def large_text() -> str:
     return paragraph * 300  # ~220 chars * 300 = ~66 KB
 
 
-@pytest.fixture()
+@pytest.fixture
 def source_file(tmp_path: Path, tiny_text: str) -> Path:
     """A real source text file on disk for orchestrator tests."""
     p = tmp_path / "source.txt"

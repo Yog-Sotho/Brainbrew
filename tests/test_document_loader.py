@@ -161,7 +161,7 @@ class TestUnicodeAndSpecialContent:
 # Parametrized chunk_size / overlap combinations
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("chunk_size,overlap", [
+@pytest.mark.parametrize(("chunk_size", "overlap"), [
     (200, 20),
     (500, 50),
     (800, 100),

@@ -23,7 +23,7 @@ PRICES: dict[str, tuple[float, float]] = {
     "text-embedding-3-large": (0.13, 0.0),
 }
 UNKNOWN_ESTIMATE = (2.50, 10.00)  # conservative default for estimates only
-LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}  # noqa: S104 - hosts we classify, not a bind address
 
 
 def is_local(base_url: str | None) -> bool:

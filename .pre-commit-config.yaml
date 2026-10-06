@@ -1,0 +1,33 @@
+# Local hooks run the locked tools through uv, so pre-commit checks exactly
+# what CI checks.  Install once:  uvx pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run --locked ruff check --fix
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: uv run --locked mypy app.py cli.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/ ui/ pages/
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: mypy-strict
+        name: mypy --strict (core)
+        entry: uv run --locked mypy --strict config.py engine/ pipeline/
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: uv-lock
+        name: uv.lock in sync with pyproject.toml
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+      - id: no-secrets-files
+        name: no .env or secrets.toml committed
+        entry: secrets files must not be committed
+        language: fail
+        files: (^|/)(\.env|secrets\.toml)$

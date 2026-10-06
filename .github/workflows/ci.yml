@@ -47,6 +47,8 @@ jobs:
           enable-cache: true
       - name: Mypy
         run: uv run --locked mypy app.py cli.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/ ui/ pages/
+      - name: Mypy --strict (core)
+        run: uv run --locked mypy --strict config.py engine/ pipeline/
 
   test:
     runs-on: ubuntu-latest

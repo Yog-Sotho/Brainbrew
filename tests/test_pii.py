@@ -22,7 +22,7 @@ def _redact(text: str, **kw) -> str:
 
 class TestValidators:
 
-    @pytest.mark.parametrize("number,ok", [
+    @pytest.mark.parametrize(("number", "ok"), [
         ("4111111111111111", True),   # Visa test number
         ("5500005555555559", True),   # Mastercard test number
         ("378282246310005", True),    # Amex test number
@@ -33,7 +33,7 @@ class TestValidators:
     def test_luhn(self, number, ok):
         assert luhn_valid(number) is ok
 
-    @pytest.mark.parametrize("iban,ok", [
+    @pytest.mark.parametrize(("iban", "ok"), [
         ("GB82 WEST 1234 5698 7654 32", True),
         ("DE89370400440532013000", True),
         ("GB82 WEST 1234 5698 7654 33", False),
@@ -111,7 +111,7 @@ class TestUrlPolicy:
     def test_keep(self):
         assert redact_pii(self.URL, url_policy="keep") == (self.URL, False)
 
-    @pytest.mark.parametrize("policy,expected", [
+    @pytest.mark.parametrize(("policy", "expected"), [
         ("domain", "Clone https://git.example.com"),
         ("keep", "Clone https://git.example.com/repo.git"),
     ])
@@ -184,7 +184,7 @@ class _FakeProvider:
 
 class TestPresidio:
 
-    @pytest.fixture()
+    @pytest.fixture
     def fake_presidio(self, monkeypatch):
         module = types.ModuleType("presidio_analyzer")
         module.AnalyzerEngine = _FakeAnalyzer  # type: ignore[attr-defined]

@@ -20,7 +20,7 @@ class TestApiKeyContainment:
 
     SECRET = "sk-prod-key-abc123xyz789"  # gitleaks:allow (fake fixture value)
 
-    @pytest.fixture()
+    @pytest.fixture
     def cfg(self):
         from config import DistillationConfig
         return DistillationConfig(teacher_model="gpt-4o", api_key=self.SECRET)

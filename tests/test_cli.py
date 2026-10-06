@@ -34,7 +34,7 @@ def _clean_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
-@pytest.fixture()
+@pytest.fixture
 def doc(tmp_path: Path) -> Path:
     p = tmp_path / "notes.txt"
     p.write_text(TEXT, encoding="utf-8")

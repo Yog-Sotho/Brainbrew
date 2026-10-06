@@ -140,8 +140,19 @@ line-length = 100
 extend-exclude = ["old"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+# S: bandit security checks; PT: pytest style; RUF: ruff's own checks.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "S", "PT", "RUF"]
+ignore = [
+    "E501",
+    "PT018",  # composite asserts (`assert a and b`) read fine in these tests
+]
+# En dashes are deliberate typography in UI text and dataset cards.
+allowed-confusables = ["–"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, use fake credentials and start child processes on purpose.
+"tests/**" = ["S101", "S105", "S106", "S108", "S311", "S603"]
+"bench/**" = ["S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["config", "orchestrator", "pipeline", "training", "publish"]
+known-first-party = ["cli", "config", "orchestrator", "engine", "pipeline", "publish", "training", "ui"]

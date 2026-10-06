@@ -76,7 +76,7 @@ class TestTarget:
 
     def test_stops_when_source_is_exhausted(self):
         recs, stats, _ = _synth(FakeOpenAI(questions_per_passage=2), target=50)
-        assert len(recs) == 10  # 5 chunks × 2 distinct questions
+        assert len(recs) == 10  # 5 chunks x 2 distinct questions
         assert stats.exhausted_chunks == 5
 
     def test_malformed_round_does_not_retire_a_chunk(self):
@@ -181,13 +181,13 @@ class TestFailures:
 
 class TestHelpers:
 
-    @pytest.mark.parametrize("remaining,active,acceptance,expected", [
+    @pytest.mark.parametrize(("remaining", "active", "acceptance", "expected"), [
         (20, 5, 0.7, 6), (1, 5, 0.7, 1), (1000, 2, 0.5, MAX_QUESTIONS_PER_CHUNK), (0, 5, 0.7, 0), (10, 0, 0.7, 0),
     ])
     def test_questions_per_chunk(self, remaining, active, acceptance, expected):
         assert questions_per_chunk(remaining, active, acceptance) == expected
 
-    @pytest.mark.parametrize("scores,threshold,ok", [
+    @pytest.mark.parametrize(("scores", "threshold", "ok"), [
         ((5, 5, 5), 4, True), ((4, 5, 4), 4, True), ((3, 5, 5), 4, False), ((5, 9, 5), 4, False), ((2, 2, 2), 2, True),
     ])
     def test_judge_passes(self, scores, threshold, ok):
