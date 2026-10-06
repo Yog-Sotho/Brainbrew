@@ -43,7 +43,7 @@ picks the model provider:
 | Provider | Setup | Default model |
 |---|---|---|
 | `openai` (default) | secret `OPENAI_API_KEY` (paid) | `gpt-4o-mini` |
-| `gemini` | secret `GEMINI_API_KEY`, a free key from [Google AI Studio](https://aistudio.google.com/apikey) | `gemini-2.5-flash`, thinking off, 2 parallel requests |
+| `gemini` | secret `GEMINI_API_KEY`, a free key from [Google AI Studio](https://aistudio.google.com/apikey) | `gemini-3.8-flash`, minimal thinking, 2 parallel requests |
 | `custom` | variables `BENCH_BASE_URL` and `BENCH_MODEL`, optional secret `BENCH_API_KEY` | – |
 
 - `BENCH_MODEL` overrides the model, and `BENCH_CONCURRENCY` sets the number of

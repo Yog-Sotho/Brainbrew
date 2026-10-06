@@ -7,7 +7,7 @@ name: Benchmark
 # "provider" input of a manual run):
 #   openai  (default) secret OPENAI_API_KEY, model gpt-4o-mini
 #   gemini  secret GEMINI_API_KEY (free tier from Google AI Studio), model
-#           gemini-2.5-flash with thinking off. Free-tier requests may be used by
+#           gemini-3.8-flash with minimal thinking. Free-tier requests may be used by
 #           Google to improve its products; the corpus is public domain.
 #   custom  any OpenAI-compatible endpoint: variable BENCH_BASE_URL, variable
 #           BENCH_MODEL, optional secret BENCH_API_KEY
@@ -77,7 +77,7 @@ jobs:
           case "$BENCH_PROVIDER" in
             openai) base="https://api.openai.com/v1"; model="gpt-4o-mini"; key_var=OPENAI_API_KEY
                     concurrency=8; key_page="https://platform.openai.com/api-keys" ;;
-            gemini) base="https://generativelanguage.googleapis.com/v1beta/openai"; model="gemini-2.5-flash"
+            gemini) base="https://generativelanguage.googleapis.com/v1beta/openai"; model="gemini-3.8-flash"
                     key_var=GEMINI_API_KEY; concurrency=2
                     key_page="https://aistudio.google.com/apikey" ;;
             custom) base="$BENCH_BASE_URL"; model=""; key_var=BENCH_API_KEY; concurrency=4; key_page=""
