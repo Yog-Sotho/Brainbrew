@@ -3,7 +3,7 @@
 ```bash
 uv run pytest                     # everything, with the locked environment
 uv run pytest tests/test_app.py   # one area
-uvx pre-commit run --all-files    # ruff, mypy, mypy --strict on the core, lock check
+uvx pre-commit run --all-files    # ruff, mypy --strict, lock check
 ```
 
 No GPU and no API key are needed.

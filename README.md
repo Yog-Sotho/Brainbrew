@@ -300,7 +300,7 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/
 <pre><code>uv run pytest                          # all tests (uses the locked core env + dev tools)
 uv run pytest tests/test_security.py   # just security tests
 # LoRA contract tests need the training packages (CI installs CPU torch for them)
-uv run ruff check . &amp;&amp; uv run mypy app.py cli.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/ ui/ pages/</code></pre>
+uv run ruff check . &amp;&amp; uv run mypy</code></pre>
 
 <p>CI (<code>.github/workflows/ci.yml</code>) runs lint, type checks, tests with an 80% coverage gate, real LoRA training on CPU, lockfile consistency, pip-audit, gitleaks, and a Docker build + smoke test on every push and PR.</p>
 

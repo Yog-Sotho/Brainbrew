@@ -1,10 +1,11 @@
 # Codebase Audit Report
 
 **Date:** 2026-10-06
-**Project:** Brainbrew v2.0.0 + Phase 4 (branch `ccr-68d77136-hi00bp`)
+**Project:** Brainbrew v2.0.0 + Phase 4 and the audit follow-ups (branch `ccr-68d77136-hi00bp`)
 **Language / Framework:** Python 3.12 · Streamlit · OpenAI-compatible async client (OpenAI, vLLM, Ollama, llama.cpp) · TRL + PEFT · Hugging Face Hub · Typer CLI
 **Project Type:** Web app (Streamlit UI and CLI driving an LLM and GPU batch pipeline). All 9 dimensions apply.
-**Audit Mode:** Global. About 5.1k LOC of application code and 5.0k LOC of tests.
+**Audit Mode:** Global. About 5.4k LOC of application code and 5.3k LOC of tests.
+**Revision:** updated after the follow-ups to the Phase 4 gate audit (8.3): every LOW finding with a code fix is closed.
 **Baseline:** [codebase_audit_baseline.md](./codebase_audit_baseline.md), 3.2 / 10 on 2026-10-05 (v1.2.0).
 
 ---
@@ -20,29 +21,50 @@ Brainbrew now installs from a lock file, builds a clean Docker image and runs en
 
 The checks behind this:
 
-- 609 tests (96% line coverage), with property-based tests and an 87.5% mutation score on the sanitizer, PII detection and dedup;
-- `mypy --strict` on the core, and ruff with the bandit rules;
+- 643 tests (96% line coverage), with property-based tests and an 87.5% mutation score on the sanitizer, PII detection and dedup;
+- `mypy --strict` on the whole codebase, and ruff with the bandit rules;
 - in CI: pip-audit, gitleaks, CodeQL, Trivy and CycloneDX SBOMs, plus Sigstore-signed releases.
 
-What remains is maintainability work: six functions of 70 to 110 lines. Two security limits are documented: URL-only SSRF checks, and internal-network reach once an operator opts in to custom endpoints. **The Phase 4 gate is met: 8.3 overall, with no CRITICAL or HIGH findings open.**
+The follow-ups closed the gate audit's LOW findings:
 
-## Overall Score: 8.3 / 10
+- metadata addresses are now also refused at connect time, after DNS resolution and on redirects;
+- the longest functions are split;
+- the Generate page's sidebar and logic moved into `ui/`;
+- strict typing covers every module.
+
+Two documented limits remain, both deployment choices rather than code defects:
+
+- behind an HTTP proxy, only the URL is checked;
+- an operator who opts in to custom endpoints on a shared server lets users reach private-network hosts.
+
+**8.7 overall, with no CRITICAL, HIGH or MEDIUM findings open** (the Phase 4 gate needed ≥ 8.0).
+
+## Overall Score: 8.7 / 10
 
 | Dimension | Score | Baseline | Priority | Status |
 |---|---|---|---|---|
 | Security | 9/10 | 3 | CRITICAL | PASS |
-| Build & Types | 9/10 | 1 | CRITICAL | PASS |
-| Code Principles (correctness and design) | 8/10 | 2 | HIGH | PASS |
-| Code Quality | 8/10 | 5 | MEDIUM | PASS |
+| Build & Types | 10/10 | 1 | CRITICAL | PASS |
+| Code Principles (correctness and design) | 9/10 | 2 | HIGH | PASS |
+| Code Quality | 9/10 | 5 | MEDIUM | PASS |
 | Dependencies | 8/10 | 2 | MEDIUM | PASS |
 | Dead Code | 9/10 | 5 | LOW | PASS |
 | Observability | 8/10 | 4 | MEDIUM | PASS |
 | Concurrency | 8/10 | 4 | HIGH | PASS |
 | Lifecycle | 8/10 | 3 | MEDIUM | PASS |
 
-Average = 75 / 9 = 8.3. No CRITICAL findings, so neither hard cap applies. Open findings: 0 CRITICAL, 0 HIGH, 0 MEDIUM, 4 LOW, 3 INFO.
+Average = 78 / 9 = 8.7 (the gate audit scored 75 / 9 = 8.3). No CRITICAL findings, so neither hard cap applies. Open findings: 0 CRITICAL, 0 HIGH, 0 MEDIUM, 2 LOW, 3 INFO.
 
-### Findings raised and fixed during this audit
+### Closed by the follow-ups (after the 8.3 gate audit)
+
+| Was | Location | Fix |
+|---|---|---|
+| LOW (Security) | `config.py` | The metadata check looked at the URL only. `engine/netguard.py` now resolves the host itself, refuses if any answer is a metadata or link-local address, and connects to the checked address. That covers names that resolve there, DNS rebinding and redirects. 23 tests, including a real local server that redirects to `169.254.169.254`. |
+| LOW (Build & Types) | `app.py`, `ui/`, `pages/`, `publish/`, `training/` | `strict = true` now applies to all 40 files (`pyproject.toml`); CI and pre-commit run one `mypy`. |
+| LOW (Code Principles) | `orchestrator._run`, `dataset_card`, `train_lora` | `_run` is a 40-line sequence of stage functions. The dataset card is built from section builders, with byte-identical output checked against a snapshot. The trainer's model loading and arguments are helpers, and the real TRL + PEFT tests pass. |
+| LOW (Code Quality) | `app.py` | The sidebar moved to `ui/sidebar.py` (typed `SidebarSettings`) and the widget-free logic to `ui/generate.py` (11 unit tests). `app.py` went from 462 to 268 lines; the AppTest suite is unchanged. |
+
+### Findings raised and fixed during the gate audit
 
 These were found while auditing and fixed before scoring, each with tests. They are listed so the score is not read as "nothing was found".
 
@@ -77,35 +99,23 @@ These were found while auditing and fixed before scoring, each with tests. They 
 
 | Severity | Location | Issue | Recommendation |
 |---|---|---|---|
-| LOW | `config.py:75` `_is_metadata_host` | The metadata check looks at the URL, not at DNS answers. A host name that resolves to `169.254.169.254` (or is rebound to it) passes. This only matters when custom endpoints are enabled, which with login on now requires an explicit opt-in. | Documented in `docs/security.md`. On cloud hosts, keep the endpoint locked or block the metadata address at the network layer. Resolving and pinning the address in the HTTP transport would close it fully. |
+| LOW | `engine/netguard.py` | Behind an HTTP proxy (`HTTPS_PROXY`), the proxy resolves the target, so only the URL check applies there. | Documented in `docs/security.md`: block the metadata address at the proxy or in the network policy as well. |
 | LOW | `app.py` (custom endpoint), `pipeline/synth.py` | Once an operator opts in to custom endpoints with login on, a signed-in user can reach private-network hosts, and the last error (up to 500 characters) is shown to them. | This is by design for local vLLM and Ollama. The opt-in is documented. If such servers are exposed, prefer a server-side allow-list of endpoints over `=1`. |
 | INFO | `pyproject.toml` (gpu extra) | PYSEC-2026-3447 (setuptools) is accepted: vLLM caps setuptools below the fixed version. The base `requirements.txt` audits clean. | Lift the ignore when vLLM relaxes its cap; Dependabot will propose it. |
 
 The checks: ruff `S` passes with documented `noqa`s only. There is no `eval`, `exec`, `pickle`, `yaml.load` or `subprocess` in production code. Repo names, model names, run ids and URLs are validated against strict patterns. The app binds to `127.0.0.1`, the OIDC gate fails closed and runs on every page, runs are owner-scoped, uploads are size-limited and file names are never used as paths. Containers run as non-root with no secrets baked in.
 
-### Build & Types [9/10]
+### Build & Types [10/10]
 
-| Severity | Location | Issue | Recommendation |
-|---|---|---|---|
-| LOW | `app.py`, `ui/`, `pages/`, `publish/`, `training/` | `mypy --strict` covers `config`, `engine/` and `pipeline/` (22 files). The Streamlit and publishing layers are checked with the default settings, because Streamlit and HF stubs are partial. | Extend strict mode module by module as the stubs improve. `publish/` is the cheapest next step. |
+No open findings. `mypy --strict` covers all 40 source files, and a probe confirmed it rejects an untyped function. `uv lock --check` passes and the exports are in sync. ruff (E, F, W, I, UP, B, SIM, S, PT, RUF), both mypy runs and pre-commit are clean. The Docker image builds, passes its healthcheck and scans clean. `mkdocs build --strict` passes.
 
-`uv lock --check` passes and the exports are in sync. ruff (E, F, W, I, UP, B, SIM, S, PT, RUF), both mypy runs and pre-commit are clean. The Docker image builds, passes its healthcheck and scans clean. `mkdocs build --strict` passes.
+### Code Principles [9/10]
 
-### Code Principles [8/10]
+No open findings. The remaining functions over 70 lines are advisory (see below). Earlier correctness gaps are closed. There is one validation source for the UI, the CLI and the config, and records stay canonical until export. The engine degrades structured output (`json_schema` → `json_object` → schema in the prompt) and remembers what each server supports.
 
-| Severity | Location | Issue | Recommendation |
-|---|---|---|---|
-| LOW | `orchestrator.py:296` `_run` (113 lines), `training/lora_trainer.py:46` `train_lora` (109), `publish/dataset_card.py:60` `dataset_card` (102) | Long functions. `_run` sequences the pipeline stages with timing and progress around each one. | Extract a small stage helper (`with stage("judge", 55): ...`) to remove the repeated timing and progress lines. Split `dataset_card` into section builders. |
+### Code Quality [9/10]
 
-Earlier correctness gaps are closed. There is one validation source for the UI, the CLI and the config, and records stay canonical until export. The engine degrades structured output (`json_schema` → `json_object` → schema in the prompt) and remembers what each server supports.
-
-### Code Quality [8/10]
-
-| Severity | Location | Issue | Recommendation |
-|---|---|---|---|
-| LOW | `app.py` (462 lines) | The Generate page is one top-level Streamlit script: the sidebar, the form, validation and submission. It reads top to bottom and AppTest covers it, but it is the largest file. | Move the sidebar and validation into `ui/` helpers, as was done for results (`ui/results.py`). |
-
-Coverage is 96% (2,780 statements, 113 missed; most of the gap is GPU-only training code). There are 609 tests plus 4 skipped GPU tests. The mutation score is 87.5% (dedup 95%, PII 92%, sanitizer 79%; the remaining survivors are mostly equivalent mutants in hash and encoding formatting). There are no TODO or FIXME markers and no `print` in production code, and the change-log comments have moved to `CHANGELOG.md`.
+No open findings. The largest file is now `pipeline/sanitizer.py` (424 lines, one responsibility). Coverage is 96% (2,934 statements, 113 missed; most of the gap is GPU-only training code). There are 643 tests plus 4 skipped GPU tests. The mutation score is 87.5% (dedup 95%, PII 92%, sanitizer 79%; the remaining survivors are mostly equivalent mutants in hash and encoding formatting). There are no TODO or FIXME markers and no `print` in production code, and the change-log comments have moved to `CHANGELOG.md`.
 
 ### Dependencies [8/10]
 
@@ -141,7 +151,9 @@ No open findings. Jobs are cancelled at interpreter exit, and Streamlit turns SI
 
 - `[High cohesion module]` `pipeline/document_loader.py:50` `semantic_chunk` (78 lines) and `pipeline/sanitizer.py:353` `sanitize_dataset` (72 lines) each do one thing over one data model at one level of abstraction. Property and mutation tests pin their behaviour.
 - `[High cohesion module]` `cli.py:92` `run` (81 lines) is mostly Typer option declarations for one command.
-- `[Single consumer, locality correct]` `ui/common.server_hf_token_allowed` and `custom_endpoints_allowed` have one caller (`app.py`). They live in `ui/common.py` so they can be unit-tested without AppTest.
+- `[High cohesion module]` `training/lora_trainer.py` `train_lora` (70 lines, 24 of them docstring) and `orchestrator.run_distillation` (63, mostly the manifest header and the status transitions) read top to bottom at one level of abstraction.
+- `[Single consumer, locality correct]` `ui/common.server_hf_token_allowed` and `custom_endpoints_allowed` have one caller each (`app.py`), as do the `ui/generate.py` helpers. They live in `ui/` so they can be unit-tested without AppTest.
+- `[Private API, guarded]` `engine/netguard.guard_client` sets the private `_network_backend` of httpx2's connection pools; there is no public hook. It raises if the attribute disappears, so an upgrade fails loudly instead of sending requests unguarded, and a test checks that every pool is guarded, proxies included.
 
 ---
 
@@ -160,11 +172,10 @@ No open findings. Jobs are cancelled at interpreter exit, and Streamlit turns SI
 
 ## Recommended Actions (Priority Order)
 
-1. [LOW] Pin the resolved endpoint address in the HTTP transport, or offer a server-side endpoint allow-list, to close DNS-based SSRF for operators who enable custom endpoints.
-2. [LOW] Extract a stage helper from `orchestrator._run`, and split `dataset_card` and `train_lora`.
-3. [LOW] Move the Generate page's sidebar and validation into `ui/` helpers.
-4. [LOW] Extend `mypy --strict` to `publish/`, then `ui/`.
-5. [INFO] Export run metrics if Brainbrew is run as a shared service.
+1. [LOW] Offer a server-side endpoint allow-list (for example, `BRAINBREW_ENDPOINTS`) as a middle ground between "locked" and "any URL" for shared servers.
+2. [LOW] Behind a proxy, block metadata addresses at the proxy as well (operator action, documented).
+3. [INFO] Export run metrics if Brainbrew is run as a shared service.
+4. [INFO] Lift the setuptools advisory ignore when vLLM relaxes its cap.
 
 ---
 

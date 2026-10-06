@@ -6,10 +6,11 @@ All notable changes to Brainbrew. The format follows
 comments. The phases refer to
 [the roadmap](https://github.com/Yog-Sotho/Brainbrew/blob/main/docs/project/sota_roadmap.md).
 
-## [Unreleased]: Phase 4, hardening
+## [Unreleased]: Phase 4, hardening, and audit follow-ups
 
 ### Added
-- `mypy --strict` on `config`, `engine/` and `pipeline/`; ruff's security (`S`),
+- `mypy --strict` for the whole codebase (settings and file list in
+  `pyproject.toml`; run `uv run mypy`); ruff's security (`S`),
   pytest (`PT`) and `RUF` rule sets; a pre-commit configuration that runs the
   locked tools.
 - Property-based tests (Hypothesis) for the chunkers, formatters, record I/O,
@@ -26,7 +27,10 @@ comments. The phases refer to
 
 ### Security
 - Endpoint URLs pointing at link-local or cloud metadata addresses are
-  rejected (SSRF), including numeric and IPv4-mapped spellings.
+  rejected (SSRF), including numeric and IPv4-mapped spellings. At connect
+  time the client also refuses hosts that *resolve* to such an address, and
+  redirects to one, and connects only to the address it checked (no DNS
+  rebinding).
 - With login on, custom endpoints are off unless the operator sets
   `BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=1` (fail closed on shared servers).
 - With login on, the server's Hugging Face token only publishes to the
@@ -42,6 +46,12 @@ comments. The phases refer to
   with their error, and a run that produces nothing reports the last error.
 - An invalid `BRAINBREW_MAX_JOBS` gave a bare `int()` error; it now says what
   the variable must be.
+
+### Changed
+- Internal structure only, with no change in behaviour: the pipeline stages,
+  dataset card sections and LoRA trainer setup are separate functions; the
+  Generate page's sidebar and widget-free logic moved to `ui/sidebar.py` and
+  `ui/generate.py`.
 
 ### Removed
 - Unused code: `exporter.deduplicate_records` (use `pipeline.dedup.deduplicate`),

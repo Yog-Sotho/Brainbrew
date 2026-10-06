@@ -75,10 +75,8 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-      - name: Mypy
-        run: uv run --locked mypy app.py cli.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/ ui/ pages/
-      - name: Mypy --strict (core)
-        run: uv run --locked mypy --strict config.py engine/ pipeline/
+      - name: Mypy --strict (files and settings in pyproject.toml)
+        run: uv run --locked mypy
 
   test:
     runs-on: ubuntu-latest
