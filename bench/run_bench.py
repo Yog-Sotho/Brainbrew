@@ -246,7 +246,7 @@ def main(argv: list[str] | None = None, make_client: Callable[[EndpointSettings]
         results.append(res)
         if res.fatal:
             print("Stopped: the endpoint refused the key, the access or the model, or the account has no "
-                  "credits, so every other document would fail the same way.", file=sys.stderr, flush=True)
+                  "credits or quota left, so every other document would fail the same way.", file=sys.stderr, flush=True)
             break
 
     report = {

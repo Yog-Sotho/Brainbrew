@@ -163,6 +163,10 @@ jobs:
                    echo "::error title=No credits::The account behind $KEY_VAR has no credits left. Add credits with the provider, or switch to a free provider (BENCH_PROVIDER=gemini)."
                    exit 1
                  fi
+                 if grep -qE 'retry in [0-9]+h' "$body"; then
+                   echo "::error title=Quota used up::The provider's quota for $model is used up for hours (see the message above). Free tiers can be far smaller than one benchmark run; pick a model with a larger quota (BENCH_MODEL) or run the benchmark on your own GPU (docs/testing.md)."
+                   exit 1
+                 fi
                  echo "::warning::The provider is rate limiting this key; running the benchmark anyway." ;;
             *) echo "::warning::The provider answered HTTP $code to the key check; running the benchmark anyway." ;;
           esac

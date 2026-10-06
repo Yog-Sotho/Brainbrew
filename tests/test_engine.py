@@ -348,3 +348,58 @@ class TestRequestFields:
         with pytest.raises(Exception, match="context length"):
             asyncio.run(self._client(reply, seed=7).chat([{"role": "user", "content": "hi"}]))
         assert len(seen) == 1
+
+
+class TestRetryDelays:
+    """Rate limits that name their wait: short ones are waited out, long ones stop the run."""
+
+    @pytest.mark.parametrize(("text", "seconds"), [
+        ("Please retry in 36.5s.", 36.5),
+        ("Quota exceeded ... Please retry in 9h4m18.1s.", 9 * 3600 + 4 * 60 + 18.1),
+        ("Please try again in 20s.", 20.0),
+        ("retry in 2m", 120.0),
+        ('{"retryDelay": "17s"}', 17.0),
+        ("Rate limit reached.", None),
+        ("retry in 500ms", None),
+    ])
+    def test_retry_delay(self, text, seconds):
+        from engine.client import retry_delay_s
+
+        assert retry_delay_s(text) == (pytest.approx(seconds) if seconds is not None else None)
+
+    @staticmethod
+    def _attempts(message: str, max_retries: int = 1):
+        import asyncio
+
+        seen = []
+
+        def reply(request):
+            seen.append(1)
+            return httpx2.Response(429, json=[{"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED"}}])
+
+        async def call():
+            settings = EndpointSettings(model="m", base_url="http://x/v1", max_retries=max_retries)
+            client = ChatClient(settings, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reply)))
+            await client.chat([{"role": "user", "content": "hi"}])
+
+        try:
+            asyncio.run(call())
+        except Exception as exc:
+            return len(seen), exc
+        raise AssertionError("no error raised")
+
+    def test_a_short_named_wait_is_retried_and_not_fatal(self):
+        import time
+
+        from engine.client import is_fatal_error
+
+        start = time.monotonic()
+        attempts, exc = self._attempts("Quota exceeded, limit: 5. Please retry in 0.2s.")
+        assert attempts == 2 and not is_fatal_error(exc)
+        assert time.monotonic() - start >= 0.9   # waited the Retry-After (rounded up to 1s)
+
+    def test_a_daily_quota_stops_at_once(self):
+        from engine.client import is_fatal_error
+
+        attempts, exc = self._attempts("Quota exceeded, limit: 20. Please retry in 9h4m18s.", max_retries=4)
+        assert attempts == 1 and is_fatal_error(exc)
