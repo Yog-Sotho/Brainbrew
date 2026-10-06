@@ -50,6 +50,10 @@ comments. The phases refer to
   as unset and uses OpenAI, as the web app already did.
 - Failed requests log their cause chain; "Connection error." alone did not say
   why.
+- The benchmark workflow checks the API key and model with one request before
+  running, and fails with a single clear error if OpenAI rejects them. The
+  benchmark itself stops at the first fatal error (rejected key, no access,
+  unknown model) instead of repeating it for every document.
 - JSONL files could split one record across two lines when a text contained
   U+0085, U+2028 or U+2029, which JSON leaves unescaped but many readers treat
   as line breaks. Both writers now escape them (found by a property test).
