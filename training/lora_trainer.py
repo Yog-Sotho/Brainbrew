@@ -73,8 +73,7 @@ def train_lora(
         import torch
         from datasets import Dataset
         from peft import LoraConfig
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        from trl import SFTConfig, SFTTrainer
+        from trl import SFTTrainer
     except ImportError as e:
         raise RuntimeError(
             f"LoRA training needs the training packages, which are not installed ({e}). "
@@ -88,13 +87,42 @@ def train_lora(
     cuda = torch.cuda.is_available()
     bf16 = cuda and torch.cuda.is_bf16_supported()
     fp16 = cuda and not bf16
-    if load_in_4bit is None:
-        load_in_4bit = cuda
+    tokenizer, model = _load(base_model, bf16, fp16, cuda if load_in_4bit is None else load_in_4bit)
+    chat = bool(getattr(tokenizer, "chat_template", None))
+    eos = "" if chat else (tokenizer.eos_token or "")
+    dataset = Dataset.from_list([to_training_example(r, chat, eos) for r in records])
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Trainer scratch output (logs, optimizer state) stays out of the adapter
+    # folder, which users download as a zip.
+    with tempfile.TemporaryDirectory(prefix="brainbrew-train-") as scratch:
+        trainer = SFTTrainer(
+            model=model,
+            processing_class=tokenizer,
+            train_dataset=dataset,
+            peft_config=LoraConfig(
+                r=lora_rank,
+                lora_alpha=lora_rank,
+                lora_dropout=0.05,
+                target_modules="all-linear",
+                task_type="CAUSAL_LM",
+            ),
+            args=_sft_args(scratch, num_train_epochs, max_steps, max_length, bf16, fp16, cuda),
+        )
+        trainer.train()
+        trainer.model.save_pretrained(str(output_dir))
+    tokenizer.save_pretrained(str(output_dir))
+    return output_dir
+
+
+def _load(base_model: str, bf16: bool, fp16: bool, load_in_4bit: bool) -> tuple[Any, Any]:
+    """The tokenizer (with a pad token) and the model, 4-bit quantised for QLoRA if asked."""
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    chat = bool(getattr(tokenizer, "chat_template", None))
 
     model_kwargs: dict[str, Any] = {
         "dtype": torch.bfloat16 if bf16 else torch.float16 if fp16 else torch.float32,
@@ -109,46 +137,28 @@ def train_lora(
             bnb_4bit_use_double_quant=True,
         )
         model_kwargs["device_map"] = "auto"
-    model = AutoModelForCausalLM.from_pretrained(base_model, **model_kwargs)
+    return tokenizer, AutoModelForCausalLM.from_pretrained(base_model, **model_kwargs)
 
-    eos = "" if chat else (tokenizer.eos_token or "")
-    dataset = Dataset.from_list([to_training_example(r, chat, eos) for r in records])
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    # Trainer scratch output (logs, optimizer state) stays out of the adapter
-    # folder, which users download as a zip.
-    scratch = tempfile.TemporaryDirectory(prefix="brainbrew-train-")
-    trainer = SFTTrainer(
-        model=model,
-        processing_class=tokenizer,
-        train_dataset=dataset,
-        peft_config=LoraConfig(
-            r=lora_rank,
-            lora_alpha=lora_rank,
-            lora_dropout=0.05,
-            target_modules="all-linear",
-            task_type="CAUSAL_LM",
-        ),
-        args=SFTConfig(
-            output_dir=scratch.name,
-            num_train_epochs=num_train_epochs,
-            max_steps=max_steps,
-            per_device_train_batch_size=2,
-            gradient_accumulation_steps=4,
-            learning_rate=2e-4,
-            lr_scheduler_type="cosine",
-            warmup_steps=0.03,  # a float in [0, 1) is a ratio of total steps
-            max_length=max_length,
-            bf16=bf16,
-            fp16=fp16,
-            gradient_checkpointing=cuda,
-            logging_steps=10,
-            save_strategy="no",
-            report_to="none",
-        ),
+def _sft_args(
+    output_dir: str, epochs: float, max_steps: int, max_length: int, bf16: bool, fp16: bool, cuda: bool
+) -> Any:
+    from trl import SFTConfig
+
+    return SFTConfig(
+        output_dir=output_dir,
+        num_train_epochs=epochs,
+        max_steps=max_steps,
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=4,
+        learning_rate=2e-4,
+        lr_scheduler_type="cosine",
+        warmup_steps=0.03,  # a float in [0, 1) is a ratio of total steps
+        max_length=max_length,
+        bf16=bf16,
+        fp16=fp16,
+        gradient_checkpointing=cuda,
+        logging_steps=10,
+        save_strategy="no",
+        report_to="none",
     )
-    with scratch:
-        trainer.train()
-        trainer.model.save_pretrained(str(output_dir))
-    tokenizer.save_pretrained(str(output_dir))
-    return output_dir

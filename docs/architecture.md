@@ -14,11 +14,11 @@ documents ─► service.read_documents ─► run folder (source.txt)
 
 | Module | Role |
 |---|---|
-| `app.py`, `pages/`, `ui/` | Streamlit pages. `ui/common.py` holds page setup, the login gate and per-user run visibility; `ui/results.py` the run panel. |
+| `app.py`, `pages/`, `ui/` | Streamlit pages. `ui/common.py` holds page setup, the login gate and per-user run visibility; `ui/sidebar.py` the Generate page's sidebar; `ui/generate.py` its widget-free logic (endpoints, estimates, validation messages); `ui/results.py` the run panel. |
 | `cli.py` | The `brainbrew` command line. |
 | `config.py` | `DistillationConfig`, the single source of validation for the app and the CLI. |
 | `orchestrator.py` | Runs one pipeline in a run folder: stages, progress, cancellation, manifest. |
-| `engine/client.py` | Async client for any OpenAI-compatible API: bounded concurrency, retries, structured output that degrades `json_schema` → `json_object` → schema in the prompt and remembers what the server supports. |
+| `engine/client.py` | Async client for any OpenAI-compatible API: bounded concurrency, retries, structured output that degrades `json_schema` → `json_object` → schema in the prompt and remembers what the server supports. Connections go through `engine/netguard.py`, which refuses cloud metadata addresses after DNS resolution and on redirects. |
 | `pipeline/synth.py` | Grounded generation in rounds, with filters, judge and dedup, until the target or the source is exhausted. Selection is deterministic. |
 | `pipeline/prompts.py`, `pipeline/filters.py` | Prompts and schemas; pattern filters for questions and answers. |
 | `pipeline/dedup.py` | MinHash-LSH near-duplicates and embedding-based paraphrase dedup. |

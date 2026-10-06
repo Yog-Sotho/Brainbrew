@@ -135,10 +135,8 @@ also_copy = [
 [tool.mypy]
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-check_untyped_defs = true
+strict = true
+files = ["app.py", "cli.py", "config.py", "orchestrator.py", "engine", "pipeline", "publish", "training", "bench", "ui", "pages"]
 
 [[tool.mypy.overrides]]
 module = [

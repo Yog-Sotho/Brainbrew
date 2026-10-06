@@ -68,10 +68,10 @@ def dataset_card(
     cfg = manifest.get("config") or {}
     counts = manifest.get("counts") or {}
     quality = manifest.get("quality") or {}
-    gen = manifest.get("generation") or {}
     models = manifest.get("models") or {}
     fmt = str(cfg.get("output_format", "alpaca"))
     records = int(counts.get("exported") or quality.get("record_count") or 0)
+    judge = models.get("judge")
 
     meta = {
         "license": license,
@@ -80,7 +80,6 @@ def dataset_card(
         "task_categories": ["question-answering", _TASKS.get(fmt, "text-generation")],
         "tags": ["synthetic", "brainbrew", "instruction-tuning", fmt],
     }
-    judge = models.get("judge")
     lines = [
         _front_matter(meta),
         f"# {repo}",
@@ -90,6 +89,22 @@ def dataset_card(
         "the source documents and answered from that passage only"
         + (", then scored by an LLM judge." if judge else "."),
         "",
+        *_summary_section(records, fmt, quality),
+        "",
+        *_method_section(manifest, cfg, models),
+        "",
+        *_filtering_section(manifest, counts, records, judge),
+        "",
+        *_source_section(dataset_path, source_path),
+        "",
+        *_license_section(license),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _summary_section(records: int, fmt: str, quality: dict[str, Any]) -> list[str]:
+    return [
         "## Summary",
         "",
         "| | |",
@@ -99,7 +114,12 @@ def dataset_card(
         _row("Quality grade", quality.get("grade", "–")),
         _row("Average answer length", f"{quality.get('avg_output_length', 0):.0f} characters"),
         _row("Unique answers", f"{quality.get('unique_ratio', 0):.0%}"),
-        "",
+    ]
+
+
+def _method_section(manifest: dict[str, Any], cfg: dict[str, Any], models: dict[str, Any]) -> list[str]:
+    judge = models.get("judge")
+    return [
         "## How it was made",
         "",
         "| | |",
@@ -112,7 +132,13 @@ def dataset_card(
         _row("Temperature", cfg.get("temperature", "–")),
         _row("Seed", manifest.get("seed", "–")),
         _row("Run", f"`{manifest.get('run_id', '–')}` ({manifest.get('finished_at') or manifest.get('started_at') or '–'})"),
-        "",
+    ]
+
+
+def _filtering_section(manifest: dict[str, Any], counts: dict[str, Any], records: int, judge: Any) -> list[str]:
+    """Every step between the source chunks and the published records, with its count."""
+    gen = manifest.get("generation") or {}
+    lines = [
         "## Filtering",
         "",
         "| Step | Count |",
@@ -135,10 +161,13 @@ def dataset_card(
         lines.append(_row("Removed by sanitizing", sanitizer.get("total", 0) - sanitizer.get("kept", 0)))
         lines.append(_row("Records with PII redacted", sanitizer.get("pii_redacted", 0)))
     lines.append(_row("Published", records))
+    return lines
 
+
+def _source_section(dataset_path: Path, source_path: Path | None) -> list[str]:
+    """Source documents are identified by a hash only; their names are never published."""
     digest = _sha256(source_path) if source_path else None
-    lines += [
-        "",
+    lines = [
         "## Source documents",
         "",
         "Document names are not published. "
@@ -146,8 +175,11 @@ def dataset_card(
     ]
     if example := _first_record(dataset_path):
         lines += ["", "## Example record", "", "```json", example, "```"]
-    lines += [
-        "",
+    return lines
+
+
+def _license_section(license: str) -> list[str]:
+    return [
         "## License and limitations",
         "",
         f"The `{license}` license was chosen by the publisher. Data derived from source documents may be "
@@ -156,9 +188,7 @@ def dataset_card(
         "All questions and answers are model-generated. The filters and the judge reduce, but do not "
         "eliminate, errors and unsupported claims. Review the data before training on it for "
         "high-stakes use.",
-        "",
     ]
-    return "\n".join(lines)
 
 
 def model_card(repo: str, manifest: dict[str, Any], dataset_repo: str | None, license: str = "other") -> str:

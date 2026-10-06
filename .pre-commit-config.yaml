@@ -9,14 +9,8 @@ repos:
         language: system
         types: [python]
       - id: mypy
-        name: mypy
-        entry: uv run --locked mypy app.py cli.py config.py orchestrator.py engine/ pipeline/ publish/ training/ bench/ ui/ pages/
-        language: system
-        types: [python]
-        pass_filenames: false
-      - id: mypy-strict
-        name: mypy --strict (core)
-        entry: uv run --locked mypy --strict config.py engine/ pipeline/
+        name: mypy --strict
+        entry: uv run --locked mypy
         language: system
         types: [python]
         pass_filenames: false

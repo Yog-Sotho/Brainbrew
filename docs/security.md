@@ -31,12 +31,16 @@
   configure an OIDC provider under `[auth]` in `.streamlit/secrets.toml`. The
   gate runs on every page, and without the configuration the app refuses to
   start the UI (fail closed).
-- Endpoint URLs that point at link-local or cloud metadata addresses
-  (`169.254.169.254`, `fd00:ec2::254`, `metadata.google.internal` and similar)
-  are rejected. The check looks at the URL, not at DNS answers: a host name that
-  later resolves to such an address is not caught. On cloud machines, keep the
-  endpoint locked (`BRAINBREW_ALLOW_CUSTOM_ENDPOINTS=0`) or block the metadata address
-  in the container's network policy.
+- Model requests never reach link-local or cloud metadata addresses
+  (`169.254.169.254`, `fd00:ec2::254`, `metadata.google.internal` and similar).
+  Endpoint URLs naming one are rejected up front. At connect time
+  (`engine/netguard.py`) the client resolves the host itself, refuses if any
+  answer is such an address, and connects to the address it checked. That
+  covers host names that resolve there, DNS answers that change between checks
+  (rebinding) and redirects.
+- Behind an HTTP proxy (`HTTPS_PROXY`), the proxy resolves the target, so only
+  the URL check applies. Block the metadata address at the proxy or in the
+  network policy as well.
 - With login on, each user sees only their own runs. A run id in a URL is not
   enough to open someone else's documents or dataset.
 

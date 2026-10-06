@@ -301,48 +301,18 @@ def _run(
     make_client: ClientFactory,
     seed: int,
 ) -> RunResult:
-    # -- Stage 1: load & validate source -------------------------------------
+    """The pipeline stages in order; each one is timed and recorded by *t*."""
     with t.step("read", 2, "Reading documents"):
-        source_bytes = source_file.stat().st_size
-        if source_bytes > MAX_SOURCE_BYTES:
-            raise ValueError(
-                f"Source file is {source_bytes / 1e6:.0f} MB — exceeds the 100 MB limit. "
-                "Split the document into smaller files and run multiple times."
-            )
-        if source_file.resolve() != run.source.resolve():
-            shutil.copyfile(source_file, run.source)
-        text = run.source.read_text(encoding="utf-8")
+        text = _read_source(source_file, run)
 
-    # -- Stage 2: chunk text ------------------------------------------------
     with t.step("chunk", 5, "Splitting into chunks"):
         chunks = source_chunks(text, cfg.use_semantic_chunking)
         logger.info("Document chunked", chunks=len(chunks))
         run.update_manifest(counts={"chunks": len(chunks)})
 
-    # -- Stage 3-4: grounded generation, filters, judge, dedup ---------------
-    gen_label = "Writing questions, answering, judging"
+    records = _generate_stage(cfg, chunks, run, t, make_client, seed)
+    counts: dict[str, int] = {"chunks": len(chunks), "generated": len(records)}
 
-    def _gen_progress(fraction: float) -> None:
-        t.progress(15 + int(fraction * 60), gen_label)
-
-    with t.step("generate", 15, gen_label):
-        records, stats, usage = asyncio.run(_generate(cfg, chunks, _gen_progress, make_client, seed, t.cancel))
-        write_records(run.raw, records)
-        write_records(run.rejected, stats.rejected)
-        counts: dict[str, int] = {"chunks": len(chunks), "generated": len(records)}
-        run.update_manifest(counts=counts, generation=stats.as_dict(), usage=usage,
-                            cost_usd=run_cost(usage, is_local(cfg.base_url)))
-        logger.info("Generation finished", **{k: v for k, v in stats.as_dict().items() if k != "answers_filtered"})
-    if not records:
-        raise RuntimeError(
-            "No usable question/answer pairs were produced "
-            f"({stats.errors} failed requests, {stats.judge_rejected} rejected by the judge, "
-            f"{sum(stats.answers_filtered.values())} filtered answers)"
-            + (f"; last error: {stats.last_error}" if stats.last_error else "")
-            + ". Check the model name, API key / endpoint and the logs, then try again."
-        )
-
-    # -- Stage 5: optional benchmark decontamination and sanitizing ----------
     if cfg.decontaminate:
         with t.step("decontaminate", 76, "Removing benchmark overlap"):
             records = _decontaminate(records, cfg, run)
@@ -352,7 +322,6 @@ def _run(
             records = _sanitize(records, cfg, run)
             counts["after_sanitize"] = len(records)
 
-    # -- Stage 6: score + export in the chosen format ------------------------
     with t.step("export", 85, "Exporting dataset"):
         write_records(run.records, records)
         quality = score_records(records)
@@ -361,41 +330,8 @@ def _run(
         run.update_manifest(counts=counts, quality=dict(quality), dataset_file=dataset_path.name)
         logger.info("Dataset exported", path=str(dataset_path), records=counts["exported"])
 
-    # -- Stage 7: optional LoRA training on canonical records ----------------
-    adapter_zip: Path | None = None
-    if cfg.train_model:
-        with t.step("train", 88, "Training LoRA adapter"):
-            from training.lora_trainer import train_lora
-
-            def _waiting() -> None:
-                t.progress(88, "Waiting for the GPU (another run is training)")
-                run.update_manifest(stage=t.stage)
-
-            with gpu_slot(t.cancel, on_wait=_waiting):
-                t.progress(88, "Training LoRA adapter")
-                train_lora(run.records, cfg.base_model, run.adapter_dir, cfg.lora_rank)
-            adapter_zip = Path(shutil.make_archive(
-                str(run.adapter_zip.with_suffix("")), "zip", root_dir=run.adapter_dir,
-            ))
-            run.update_manifest(adapter_file=adapter_zip.name)
-
-    # -- Stage 8: optional HF publish (dataset card first, then data; then the adapter) --
-    published_repo: str | None = None
-    if (cfg.publish_dataset and cfg.hf_repo) or cfg.publish_adapter:
-        with t.step("publish", 96, "Publishing to Hugging Face"):
-            from publish.dataset_card import dataset_card, model_card
-            from publish.hf_publisher import publish_adapter, publish_dataset
-
-            manifest = run.read_manifest()
-            if cfg.publish_dataset and cfg.hf_repo:
-                card = dataset_card(cfg.hf_repo, manifest, dataset_path, run.source, cfg.dataset_license)
-                publish_dataset(str(dataset_path), cfg.hf_repo, cfg.hf_token, private=cfg.hf_private, card=card)
-                published_repo = cfg.hf_repo
-                run.update_manifest(published_repo=published_repo, published_private=cfg.hf_private)
-            if cfg.publish_adapter and cfg.model_repo:
-                card = model_card(cfg.model_repo, manifest, published_repo, cfg.dataset_license)
-                publish_adapter(run.adapter_dir, cfg.model_repo, cfg.hf_token, private=cfg.hf_private, card=card)
-                run.update_manifest(published_model_repo=cfg.model_repo)
+    adapter_zip = _train_stage(cfg, run, t) if cfg.train_model else None
+    published_repo = _publish_stage(cfg, run, t, dataset_path)
 
     t.progress(100, "Done")
     return RunResult(
@@ -406,3 +342,88 @@ def _run(
         adapter_zip=adapter_zip,
         published_repo=published_repo,
     )
+
+
+def _read_source(source_file: Path, run: RunDir) -> str:
+    """Copy the source text into the run folder (checking its size) and return it."""
+    source_bytes = source_file.stat().st_size
+    if source_bytes > MAX_SOURCE_BYTES:
+        raise ValueError(
+            f"Source file is {source_bytes / 1e6:.0f} MB — exceeds the 100 MB limit. "
+            "Split the document into smaller files and run multiple times."
+        )
+    if source_file.resolve() != run.source.resolve():
+        shutil.copyfile(source_file, run.source)
+    return run.source.read_text(encoding="utf-8")
+
+
+def _generate_stage(
+    cfg: DistillationConfig,
+    chunks: list[str],
+    run: RunDir,
+    t: _Tracker,
+    make_client: ClientFactory,
+    seed: int,
+) -> list[Record]:
+    """Grounded generation, answer filters, judge and dedup; fails if nothing is left."""
+    label = "Writing questions, answering, judging"
+
+    def on_progress(fraction: float) -> None:
+        t.progress(15 + int(fraction * 60), label)
+
+    with t.step("generate", 15, label):
+        records, stats, usage = asyncio.run(_generate(cfg, chunks, on_progress, make_client, seed, t.cancel))
+        write_records(run.raw, records)
+        write_records(run.rejected, stats.rejected)
+        run.update_manifest(counts={"chunks": len(chunks), "generated": len(records)},
+                            generation=stats.as_dict(), usage=usage,
+                            cost_usd=run_cost(usage, is_local(cfg.base_url)))
+        logger.info("Generation finished", **{k: v for k, v in stats.as_dict().items() if k != "answers_filtered"})
+    if not records:
+        raise RuntimeError(
+            "No usable question/answer pairs were produced "
+            f"({stats.errors} failed requests, {stats.judge_rejected} rejected by the judge, "
+            f"{sum(stats.answers_filtered.values())} filtered answers)"
+            + (f"; last error: {stats.last_error}" if stats.last_error else "")
+            + ". Check the model name, API key / endpoint and the logs, then try again."
+        )
+    return records
+
+
+def _train_stage(cfg: DistillationConfig, run: RunDir, t: _Tracker) -> Path:
+    """Train the LoRA adapter on the canonical records (one GPU holder at a time); return its zip."""
+    with t.step("train", 88, "Training LoRA adapter"):
+        from training.lora_trainer import train_lora
+
+        def waiting() -> None:
+            t.progress(88, "Waiting for the GPU (another run is training)")
+            run.update_manifest(stage=t.stage)
+
+        with gpu_slot(t.cancel, on_wait=waiting):
+            t.progress(88, "Training LoRA adapter")
+            train_lora(run.records, cfg.base_model, run.adapter_dir, cfg.lora_rank)
+        adapter_zip = Path(shutil.make_archive(str(run.adapter_zip.with_suffix("")), "zip", root_dir=run.adapter_dir))
+        run.update_manifest(adapter_file=adapter_zip.name)
+    return adapter_zip
+
+
+def _publish_stage(cfg: DistillationConfig, run: RunDir, t: _Tracker, dataset_path: Path) -> str | None:
+    """Publish to Hugging Face: dataset card first, then the data; then the adapter."""
+    if not ((cfg.publish_dataset and cfg.hf_repo) or cfg.publish_adapter):
+        return None
+    published_repo: str | None = None
+    with t.step("publish", 96, "Publishing to Hugging Face"):
+        from publish.dataset_card import dataset_card, model_card
+        from publish.hf_publisher import publish_adapter, publish_dataset
+
+        manifest = run.read_manifest()
+        if cfg.publish_dataset and cfg.hf_repo:
+            card = dataset_card(cfg.hf_repo, manifest, dataset_path, run.source, cfg.dataset_license)
+            publish_dataset(str(dataset_path), cfg.hf_repo, cfg.hf_token, private=cfg.hf_private, card=card)
+            published_repo = cfg.hf_repo
+            run.update_manifest(published_repo=published_repo, published_private=cfg.hf_private)
+        if cfg.publish_adapter and cfg.model_repo:
+            card = model_card(cfg.model_repo, manifest, published_repo, cfg.dataset_license)
+            publish_adapter(run.adapter_dir, cfg.model_repo, cfg.hf_token, private=cfg.hf_private, card=card)
+            run.update_manifest(published_model_repo=cfg.model_repo)
+    return published_repo

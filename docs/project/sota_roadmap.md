@@ -203,6 +203,13 @@ Each of these is supported by current practice (see Sources in the audit):
 
 It also removed three unused symbols. Four LOW findings remain, listed with actions in the report.
 
+**Follow-ups (2026-10-06):** the LOW findings with a code fix are closed, and the audit now scores **8.7 / 10**.
+
+- Metadata addresses are refused at connect time as well (`engine/netguard.py`: after DNS resolution and on redirects, connecting only to the checked address).
+- The long pipeline, card and trainer functions are split.
+- The Generate page's sidebar and logic moved into `ui/`.
+- `mypy --strict` covers the whole codebase.
+
 ## Suggested PR breakdown
 
 1. `sec/secrets-auth`: 0.1 and 0.2
