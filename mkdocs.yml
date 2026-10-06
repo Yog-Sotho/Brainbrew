@@ -1,0 +1,42 @@
+site_name: Brainbrew
+site_description: Grounded synthetic training data from your documents, for any OpenAI-compatible model.
+repo_url: https://github.com/Yog-Sotho/Brainbrew
+edit_uri: edit/main/docs/
+strict: true
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+  palette:
+    - scheme: default
+      toggle: {icon: material/brightness-7, name: Dark mode}
+    - scheme: slate
+      toggle: {icon: material/brightness-4, name: Light mode}
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Introduction: index.md
+  - Quick start: quick-start.md
+  - User guide: user-guide.md
+  - Command line: cli.md
+  - Docker: docker.md
+  - Configuration reference: configuration.md
+  - Architecture: architecture.md
+  - Security model: security.md
+  - Hardware: hardware.md
+  - Troubleshooting: troubleshooting.md
+  - Testing: testing.md
+  - Tech stack: tech-stack.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
+  - Project:
+      - Codebase audit: project/codebase_audit.md
+      - Roadmap: project/sota_roadmap.md

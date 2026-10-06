@@ -228,7 +228,7 @@ class TestDistillationConfigInvalid:
             DistillationConfig(base_url=LOCAL_URL, teacher_model="gpt-4o", concurrency=0)
 
 
-# ── FIX C-01: safe_dict() ────────────────────────────────────────────────────
+# ── safe_dict() ──────────────────────────────────────────────────────────────
 
 class TestSafeDict:
 
@@ -258,7 +258,7 @@ class TestSafeDict:
             pytest.fail(f"safe_dict() is not JSON-serialisable: {e}")
 
 
-# ── FIX C-02: API key never leaks via repr/str ──────────────────────────────
+# ── API key never leaks via repr/str ────────────────────────────────────────
 
 class TestApiKeyNeverLeaks:
 

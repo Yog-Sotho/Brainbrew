@@ -34,6 +34,36 @@ jobs:
       - name: Ruff
         run: uv run --locked --only-group dev ruff check . --output-format=github
 
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Same generator as the release workflow, so a broken SBOM fails here first.
+      - name: CycloneDX SBOM of the locked dependencies
+        run: |
+          uvx --from cyclonedx-bom==7.5.0 cyclonedx-py requirements requirements.txt --of JSON --validate -o sbom.cdx.json
+          uvx --from cyclonedx-bom==7.5.0 cyclonedx-py requirements requirements-gpu.txt --of JSON --validate -o sbom-gpu.cdx.json
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - name: Build the docs site (fails on broken links)
+        run: uv run --locked --only-group docs mkdocs build --strict
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -188,3 +218,11 @@ jobs:
           curl -fsS http://127.0.0.1:8501/_stcore/health
           test "$(docker exec "$cid" id -u)" = "10001"
           docker rm -f "$cid"
+      # Trivy's official image, pinned by digest (bump it with the tag).
+      - name: Scan image for fixable HIGH/CRITICAL vulnerabilities
+        env:
+          TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE"
+          image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+          brainbrew-api:ci

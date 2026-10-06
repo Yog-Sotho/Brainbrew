@@ -48,7 +48,7 @@ def publish_dataset(
         ValueError: If token is missing or repo_name format is invalid.
     """
     token = _token(token)
-    # FIX M-10: same repo-name rule as the UI and DistillationConfig
+    # Same repo-name rule as the UI and DistillationConfig.
     repo_name = check_hf_repo_name(repo_name)
 
     api = HfApi(token=token)

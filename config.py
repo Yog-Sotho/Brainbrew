@@ -33,7 +33,7 @@ class OutputFormat(StrEnum):
     OPENAI = "openai"
 
 
-# FIX C-07: app.py imports this dict for the selectbox display labels.
+# app.py imports this dict for the selectbox display labels.
 QUALITY_MODE_LABELS: dict[QualityMode, str] = {
     QualityMode.FAST:     "Fast ⚡ (filters only, no judge)",
     QualityMode.BALANCED: "Balanced 🎯 (every pair judged)",
@@ -220,7 +220,7 @@ class DistillationConfig(BaseModel):
             raise ValueError("\n".join(problems))
         return self
 
-    # ── FIX C-01: safe serialisation that never leaks secrets ────────────
+    # ── Safe serialisation that never leaks secrets ─────────────────────
     def safe_dict(self) -> dict[str, Any]:
         """Return model_dump with api_key and hf_token redacted. Safe for logging / display."""
         d = self.model_dump(exclude_none=True)
@@ -253,7 +253,7 @@ class DistillationConfig(BaseModel):
         """JSON-safe settings with secrets removed entirely (for run manifests)."""
         return self.model_dump(mode="json", exclude={"api_key", "hf_token"})
 
-    # ── FIX C-02: prevent API key from leaking in repr / str ─────────────
+    # ── Keep the API key out of repr / str ─────────────────────────────
     def __repr__(self) -> str:
         safe = self.safe_dict()
         fields = ", ".join(f"{k}={v!r}" for k, v in safe.items())

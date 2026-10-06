@@ -55,3 +55,6 @@ checkpoints/
 
 # Generation run directories (datasets, adapters, manifests)
 runs/
+
+# mutmut working copy
+mutants/

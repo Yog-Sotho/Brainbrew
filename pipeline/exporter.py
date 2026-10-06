@@ -7,7 +7,7 @@ Formatting happens only here, at the very end of the pipeline:
   - ChatML:   {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
   - OpenAI:   {"messages": [{"role": "system", ...}, {"role": "user", ...}, ...]}
 
-Also provides exact-match and near-duplicate deduplication (Enhancement 5).
+Also provides exact-match and near-duplicate deduplication.
 """
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.dedup import deduplicate
-from pipeline.records import Record
+from pipeline.records import Record, jsonl_line
 
 logger = logging.getLogger(__name__)
 
 
-# ── Enhancement 5: Deduplication (MinHash-LSH, pipeline/dedup.py) ───────────
+# ── Deduplication (MinHash-LSH, pipeline/dedup.py) ──────────────────────────
 
 def deduplicate_records(
     records: list[Record],
@@ -109,6 +109,6 @@ def export_dataset(
     count = 0
     with open(output_path, "w", encoding="utf-8") as fout:
         for rec in records:
-            fout.write(json.dumps(formatter(rec), ensure_ascii=False) + "\n")
+            fout.write(jsonl_line(json.dumps(formatter(rec), ensure_ascii=False)))
             count += 1
     return count

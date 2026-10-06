@@ -39,6 +39,8 @@
 
 <hr>
 
+<p><strong>Docs:</strong> the <a href="docs/index.md">documentation</a> lives in <code>docs/</code> as Markdown; browse it locally with <code>uv run --group docs mkdocs serve</code>.</p>
+
 <h2>Why Brainbrew Slaps</h2>
 <ul>
   <li><strong>Zero coding</strong> — literally just upload files and click "Generate Dataset"</li>

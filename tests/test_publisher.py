@@ -72,7 +72,7 @@ class TestTokenValidation:
 
 
 # ---------------------------------------------------------------------------
-# M-10: Repo name validation
+# Repo name validation
 # ---------------------------------------------------------------------------
 
 class TestRepoNameValidation:

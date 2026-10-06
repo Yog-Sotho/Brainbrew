@@ -41,7 +41,7 @@ def character_chunk(text: str, chunk_size: int = 800, overlap: int = 100) -> lis
     return [c for c in chunks if c.strip()]
 
 
-# ── Enhancement 9: paragraph-aware semantic chunking ────────────────────────
+# ── Paragraph-aware semantic chunking ────────────────────────────────────────
 
 # Sentence boundary regex — handles abbreviations conservatively
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\u00C0-\u024F])")

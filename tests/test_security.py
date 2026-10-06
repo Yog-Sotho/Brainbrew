@@ -2,18 +2,19 @@
 tests/test_security.py
 
 Cross-cutting security tests covering:
-  S-01: API key must never appear in logs, repr, str, or serialised config.
-  S-02: Filename sanitisation must block path-traversal and shell-injection patterns.
-  M-10: HF repo name validation.
+  - the API key never appears in logs, repr, str, or serialised config;
+  - Hugging Face repo name validation;
+  - Hugging Face token handling.
+
+Uploaded file names are never used as paths (documents are read from memory),
+so there is no filename rule to test.
 """
 from __future__ import annotations
-
-import re
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# S-01 — API key containment
+# API key containment
 # ---------------------------------------------------------------------------
 
 class TestApiKeyContainment:
@@ -69,63 +70,7 @@ LOCAL_URL = "http://localhost:8000/v1"
 
 
 # ---------------------------------------------------------------------------
-# S-02 — Filename sanitisation
-# ---------------------------------------------------------------------------
-
-_SAFE_FILENAME_RE = re.compile(r"^[\w\-. ]+$")
-
-
-class TestFilenameSanitisation:
-
-    @pytest.mark.parametrize("filename", [
-        "document.txt",
-        "my-file.pdf",
-        "report_2024.txt",
-        "My Document v2.pdf",
-        "data.PDF",
-        "file123.txt",
-        "some_long_file_name_with_underscores.pdf",
-        "file with spaces.txt",
-        "README.md",
-    ])
-    def test_safe_filename_accepted(self, filename):
-        assert _SAFE_FILENAME_RE.match(filename), (
-            f"'{filename}' should be accepted as safe but was rejected"
-        )
-
-    @pytest.mark.parametrize("filename", [
-        "../etc/passwd",
-        "../../secret.txt",
-        "/etc/passwd",
-        "file\x00name.txt",
-        "file;rm -rf /.txt",
-        "file`whoami`.txt",
-        "file$(id).txt",
-        "file|cat /etc/passwd.txt",
-        "file>output.txt",
-        "file<input.txt",
-        "file&background.txt",
-        r"C:\Windows\System32\cmd",
-        "file\ninjection.txt",
-        "file\tname.txt",
-        "file'name.txt",
-        'file"name.txt',
-    ])
-    def test_unsafe_filename_rejected(self, filename):
-        assert not _SAFE_FILENAME_RE.match(filename), (
-            f"'{filename}' should be REJECTED as unsafe but was accepted"
-        )
-
-    def test_empty_filename_rejected(self):
-        assert not _SAFE_FILENAME_RE.match("")
-
-    def test_regex_is_anchored(self):
-        dangerous = "safe_prefix/../../../etc/passwd"
-        assert not _SAFE_FILENAME_RE.match(dangerous)
-
-
-# ---------------------------------------------------------------------------
-# M-10 — HF repo name validation
+# HF repo name validation
 # ---------------------------------------------------------------------------
 
 class TestHfRepoNameValidation:
@@ -185,7 +130,7 @@ class TestCombinedSecurityInvariants:
 
 
 # ---------------------------------------------------------------------------
-# S-03 — HF Token and Repo Name security checks
+# HF token and repo name checks
 # ---------------------------------------------------------------------------
 
 class TestHfTokenAndRepoSecurity:

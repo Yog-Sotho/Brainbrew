@@ -72,7 +72,7 @@ _HTML_TAG_RE = re.compile(r'<[^>]+>')
 
 def strip_html(text: str) -> str:
     """Remove HTML/XML tags, replacing them with a single space."""
-    # ⚡ Optimization: Bypass regex substitution when no '<' exists in the text
+    # Fast path: no '<' means no tags to strip.
     if '<' not in text:
         return text
     return _HTML_TAG_RE.sub(' ', text)
@@ -98,7 +98,7 @@ def clean_text(text: str, remove_html: bool = True) -> str:
     """
     if not isinstance(text, str):
         return text
-    # ⚡ Optimization: Skip unicode normalization for ASCII strings
+    # Fast path: ASCII text needs no Unicode normalisation.
     if not text.isascii():
         text = unicodedata.normalize('NFKC', text)
     if remove_html:
@@ -106,7 +106,7 @@ def clean_text(text: str, remove_html: bool = True) -> str:
     if '\r' in text:
         text = text.replace('\r\n', '\n').replace('\r', '\n')
     text = _CONTROL_CHAR_RE.sub(' ', text)
-    # ⚡ Optimization: each whitespace pass runs only when its trigger is present.
+    # Fast path: each whitespace pass runs only when its trigger is present.
     if '\t' in text or '  ' in text:
         text = _INLINE_SPACE_RE.sub(' ', text)
     if '\n' in text:
@@ -203,8 +203,8 @@ def check_quality(text: str, cfg: SanitizerConfig) -> str | None:
     unique_ratio = len(set(words)) / len(words) if words else 0.0
     if unique_ratio < cfg.min_unique_ratio:
         return f'low unique-word ratio ({unique_ratio:.3f} < {cfg.min_unique_ratio})'
-    # ⚡ Optimization: Replace character-by-character generator expression and `ord()` calls
-    # with fast, C-level encoding length check to count ASCII characters, and bypass for pure ASCII.
+    # Count ASCII characters with a C-level encode instead of a per-character loop;
+    # pure-ASCII text skips even that.
     ascii_ratio = (
         1.0 if text.isascii()
         else len(text.encode('ascii', errors='ignore')) / len(text)
@@ -228,10 +228,8 @@ def get_record_hash(record: dict[str, Any], normalize: bool = True) -> str:
     if normalize:
         def _norm(v: Any) -> Any:
             if isinstance(v, str):
-                # ⚡ Optimization: Replace slow, regex-based whitespace collapsing
-                # re.sub(r'\s+', ' ', v.lower().strip()) with native split-join.
-                # Since split() handles all whitespace runs and joins with a single space,
-                # this is fully equivalent but ~4.5x faster.
+                # split() collapses every whitespace run (and trims), so this equals
+                # re.sub(r'\s+', ' ', v.lower().strip()) at a fraction of the cost.
                 return ' '.join(v.lower().split())
             if isinstance(v, dict):
                 return {k: _norm(val) for k, val in v.items()}

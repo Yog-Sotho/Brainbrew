@@ -13,7 +13,7 @@ Covers:
   - No whitespace-only fragments in output
   - Unicode and multi-language text handled safely
   - Chunk size boundaries
-  - M-05: semantic_chunk does paragraph-aware splitting
+  - semantic_chunk does paragraph-aware splitting
 """
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ class TestCharacterChunk:
 
 
 # ---------------------------------------------------------------------------
-# semantic_chunk — paragraph-aware splitting (M-05, Enhancement 9)
+# semantic_chunk — paragraph-aware splitting
 # ---------------------------------------------------------------------------
 
 class TestSemanticChunk:

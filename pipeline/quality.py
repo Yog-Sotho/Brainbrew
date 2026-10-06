@@ -1,5 +1,5 @@
 """
-Dataset quality report (Enhancement 10).
+Dataset quality report.
 
 Scores canonical records, so a dataset gets the same grade whichever export
 format the user picked.
