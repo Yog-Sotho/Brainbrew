@@ -1,5 +1,6 @@
 site_name: Brainbrew
 site_description: Grounded synthetic training data from your documents, for any OpenAI-compatible model.
+site_url: https://yog-sotho.github.io/Brainbrew/
 repo_url: https://github.com/Yog-Sotho/Brainbrew
 edit_uri: edit/main/docs/
 strict: true
