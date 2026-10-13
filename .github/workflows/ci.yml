@@ -163,25 +163,18 @@ jobs:
           persist-credentials: false
       # One file per step: pip-audit rejects marker-split duplicate pins
       # (e.g. numpy for py<3.13 / >=3.13) when several -r files are combined.
-      # PYSEC-2026-3447 (setuptools <83): sdist MANIFEST.in handling at build
-      # time only; vllm caps setuptools<81 for the whole lock. Not reachable
-      # at runtime.
       - name: pip-audit (core)
         uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
         with:
           inputs: requirements.txt
           require-hashes: true
           no-deps: true
-          ignore-vulns: |
-            PYSEC-2026-3447
       - name: pip-audit (vLLM + train)
         uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
         with:
           inputs: requirements-gpu.txt
           require-hashes: true
           no-deps: true
-          ignore-vulns: |
-            PYSEC-2026-3447
 
   secrets:
     runs-on: ubuntu-latest

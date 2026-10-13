@@ -49,6 +49,12 @@ comments. The phases refer to
   last 200 are dropped from memory (their run folders stay).
 
 ### Security
+- setuptools 80.10.2 -> 84.0.0 in the lock and the `requirements*.txt` exports, fixing
+  CVE-2026-59890 / GHSA-h35f-9h28-mq5c (`MANIFEST.in` exclusions bypassed in sdists).
+  vLLM still caps setuptools below 81, so `[tool.uv] override-dependencies` lifts the
+  cap; nothing in the GPU environment needs the removed `pkg_resources` on Python 3.12.
+  The package itself is now built with setuptools >= 83, and CI's pip-audit no longer
+  ignores the advisory.
 - Endpoint URLs pointing at link-local or cloud metadata addresses are
   rejected (SSRF), including numeric and IPv4-mapped spellings. At connect
   time the client also refuses hosts that *resolve* to such an address, and
