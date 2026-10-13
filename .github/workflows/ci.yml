@@ -118,6 +118,15 @@ jobs:
           uv pip install --no-deps -r "$RUNNER_TEMP/train-cpu.txt"
           torch_version=$(sed -n 's/^torch==\([^ ;]*\).*/\1/p' requirements-train.txt)
           uv pip install --no-deps --index-url https://download.pytorch.org/whl/cpu "torch==${torch_version}"
+      # Keep the tiny test models between runs. When the Hugging Face Hub errors
+      # (HTTP 5xx, timeouts), huggingface_hub falls back to cached files, so a Hub
+      # outage no longer fails this job. Saved only after a successful run.
+      - name: Cache the tiny Hugging Face test models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-test-models-${{ hashFiles('tests/test_lora_trainer.py') }}
+          restore-keys: hf-test-models-
       - name: LoRA contract tests (real TRL + PEFT on tiny models)
         run: uv run --no-sync pytest tests/test_lora_trainer.py
 
