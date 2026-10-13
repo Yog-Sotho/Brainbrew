@@ -12,4 +12,5 @@
    coverage gate, LoRA training on CPU, the lockfile check, pip-audit, gitleaks,
    CodeQL and a Docker build.
 
-Docs live in `docs/` as Markdown and build with `uv run --group docs mkdocs serve`.
+Docs live in `docs/` as Markdown and build with `uv run --group docs mkdocs serve`. Every push to
+`main` that touches them publishes the site to <https://yog-sotho.github.io/Brainbrew/>.

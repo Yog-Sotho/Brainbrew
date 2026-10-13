@@ -9,6 +9,9 @@ comments. The phases refer to
 ## [Unreleased]: Phase 4, hardening, and audit follow-ups
 
 ### Added
+- The documentation is published to GitHub Pages at
+  <https://yog-sotho.github.io/Brainbrew/> by a new `docs.yml` workflow on every push to
+  `main` that changes it.
 - The benchmark workflow takes a model provider (`BENCH_PROVIDER`): `openai`,
   `gemini` (free tier, secret `GEMINI_API_KEY`, `gemma-4-31b-it`: the only
   model there whose free daily quota fits a run) or `custom` (any OpenAI-compatible endpoint). Each has its own key secret,

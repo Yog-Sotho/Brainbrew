@@ -58,3 +58,6 @@ runs/
 
 # mutmut working copy
 mutants/
+
+# MkDocs build output (published by .github/workflows/docs.yml)
+/site/

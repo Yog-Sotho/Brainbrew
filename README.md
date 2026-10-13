@@ -39,7 +39,7 @@
 
 <hr>
 
-<p><strong>Docs:</strong> the <a href="docs/index.md">documentation</a> lives in <code>docs/</code> as Markdown; browse it locally with <code>uv run --group docs mkdocs serve</code>.</p>
+<p><strong>Docs:</strong> <a href="https://yog-sotho.github.io/Brainbrew/">yog-sotho.github.io/Brainbrew</a>, built from the Markdown in <a href="docs/index.md"><code>docs/</code></a>; preview your edits locally with <code>uv run --group docs mkdocs serve</code>.</p>
 
 <h2>Why Brainbrew Slaps</h2>
 <ul>
