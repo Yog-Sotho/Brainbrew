@@ -229,8 +229,10 @@ class TestCancel:
 class TestFailures:
 
     def test_nothing_accepted_raises(self, source):
-        with pytest.raises(RuntimeError, match="No usable question/answer pairs"):
+        with pytest.raises(orchestrator.NoPairsError, match="No usable question/answer pairs") as exc:
             _run(_cfg(), source, FakeOpenAI(refuse_every=1))
+        assert isinstance(exc.value, RuntimeError)
+        assert exc.value.stats["errors"] == 0 and sum(exc.value.stats["answers_filtered"].values()) > 0
 
     def test_sanitizer_removing_everything_raises(self, source):
         with patch("pipeline.sanitizer.check_quality", return_value="rejected"), \

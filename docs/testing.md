@@ -61,6 +61,12 @@ picks the model provider:
   your own GPU (below) is much faster.
 - A provider that asks for a short wait (a per-minute limit) is waited out. One
   that asks for hours (a daily quota) stops the run at once with its message.
+- Provider failures (HTTP 5xx, timeouts, dropped connections) are not counted
+  against Brainbrew. A yield shortfall no larger than the number of requests the
+  provider failed is a warning, not a failure. A document that gets no pairs
+  because every request failed stops the run, which ends as "not measured"
+  instead of red. The quality gates (faithfulness, near-duplicates, refusals)
+  apply to every pair produced, whatever the provider did.
 - On Gemini's free tier, Google may use the requests to improve its products. The
   benchmark corpus is public domain, but do not send private documents through a
   free tier.

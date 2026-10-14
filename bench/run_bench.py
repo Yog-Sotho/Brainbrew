@@ -14,6 +14,12 @@ Gate (per document):
   * refusal rate 0 (answers the refusal/non-answer filters would flag);
   * yield within 10 % of the target.
 
+Provider failures (HTTP 5xx, timeouts, dropped connections) say nothing about
+Brainbrew, so they are reported as warnings, not gate failures: a yield shortfall
+no larger than the number of requests the provider failed, and a document that got
+no pairs because every request failed. A document that got nothing stops the run
+(the provider is down). The quality gates still apply to every pair produced.
+
 The API key is read from OPENAI_API_KEY only, never from the command line.
 Exit status is 1 when any gate fails; the JSON report has every number.
 """
@@ -23,6 +29,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -54,6 +61,8 @@ MAX_REFUSAL_RATE = 0.0
 YIELD_TOLERANCE = 0.10
 NEAR_DUP_THRESHOLD = 0.8
 REFUSALS = {"empty", "unanswerable", "refusal", "non-answer"}
+# A last error like this is the provider's fault (describe_error: "Type: message").
+PROVIDER_ERROR_RE = re.compile(r"^(InternalServerError|APIConnectionError|APITimeoutError)\b|Error code: 5\d\d")
 
 
 @dataclass
@@ -71,8 +80,11 @@ class DocResult:
     run_id: str = ""
     usage: dict[str, Any] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # provider trouble, not a Brainbrew regression
     error: str | None = None
     fatal: bool = False   # bad key, no access or unknown model: every other document would fail too
+    provider_errors: int = 0  # requests the provider failed (5xx, timeout, connection)
+    provider_down: bool = False  # no pairs at all because the provider failed every request
 
 
 # ── metrics ──────────────────────────────────────────────────────────────────
@@ -112,6 +124,25 @@ async def rejudge(judge: ChatClient, records: list[Record], chunks: list[str]) -
     results = await asyncio.gather(*(one(r) for r in records))
     scores = [s for s in results if s is not None]
     return scores, len(results) - len(scores)
+
+
+def provider_errors(stats: dict[str, Any]) -> int:
+    """Failed requests attributable to the provider: the generation's error count when
+    its last error was server-side (5xx, timeout, connection), else 0."""
+    errors = int(stats.get("errors") or 0)
+    last = str(stats.get("last_error") or "")
+    return errors if errors and PROVIDER_ERROR_RE.search(last) else 0
+
+
+def excuse_provider_shortfall(res: DocResult) -> None:
+    """Turn a yield shortfall the provider's failed requests account for into a warning."""
+    shortfall = res.target - res.records
+    if not (0 < shortfall <= res.provider_errors):
+        return
+    yield_failures = [f for f in res.failures if f.startswith("yield ")]
+    for f in yield_failures:
+        res.failures.remove(f)
+        res.warnings.append(f"{f}: the provider failed {res.provider_errors} requests")
 
 
 def check_gate(res: DocResult) -> list[str]:
@@ -164,13 +195,23 @@ def bench_document(
         except Exception as exc:  # report and move on to the next document
             res.fatal = is_fatal_error(exc)
             res.error = f"{type(exc).__name__}: {exc}"
-            res.failures = [f"run failed: {res.error}"]
             res.seconds = round(time.perf_counter() - start, 1)
+            stats = exc.stats if isinstance(exc, orchestrator.NoPairsError) else {}
+            res.provider_errors = provider_errors(stats)
+            # Nothing was lost to the judge or the filters: the provider failed every request.
+            if (res.provider_errors and not stats.get("judge_rejected")
+                    and not sum((stats.get("answers_filtered") or {}).values())):
+                res.provider_down = True
+                res.warnings = [f"no pairs: the provider failed {res.provider_errors} requests"]
+            else:
+                res.failures = [f"run failed: {res.error}"]
             return res
 
     records = read_records(result.run.records)
     res.run_id = result.run.run_id
-    res.usage = result.run.read_manifest().get("usage", {})
+    manifest = result.run.read_manifest()
+    res.usage = manifest.get("usage", {})
+    res.provider_errors = provider_errors(manifest.get("generation", {}))
     res.records = len(records)
     res.yield_ratio = len(records) / target
     res.near_dup_rate = near_dup_rate(records)
@@ -194,12 +235,21 @@ def bench_document(
     res.faithfulness = round(sum(scores) / len(scores), 3) if scores else 0.0
     res.seconds = round(time.perf_counter() - start, 1)
     res.failures = check_gate(res)
+    excuse_provider_shortfall(res)
     return res
+
+
+def verdict(report: dict[str, Any]) -> str:
+    if not report["passed"]:
+        return "FAIL"
+    if report["provider_down"]:
+        return "NOT MEASURED (the provider failed every request)"
+    return "PASS (with provider errors)" if any(d["warnings"] for d in report["documents"]) else "PASS"
 
 
 def summary_markdown(report: dict[str, Any]) -> str:
     lines = [
-        f"## Brainbrew generation benchmark — {'PASS' if report['passed'] else 'FAIL'}",
+        f"## Brainbrew generation benchmark — {verdict(report)}",
         "",
         f"Model `{report['model']}`, judge `{report['judge_model']}`, mode `{report['mode']}`.",
         "",
@@ -207,9 +257,10 @@ def summary_markdown(report: dict[str, Any]) -> str:
         "|---|---|---|---|---|---|---|",
     ]
     for d in report["documents"]:
-        verdict = "✅" if not d["failures"] else "❌ " + "; ".join(d["failures"])
+        result = ("❌ " + "; ".join(d["failures"]) if d["failures"]
+                  else "⚠️ " + "; ".join(d["warnings"]) if d["warnings"] else "✅")
         lines.append(f"| {d['document']} | {d['records']} / {d['target']} | {d['faithfulness']:.2f} | "
-                     f"{d['near_dup_rate']:.1%} | {d['refusal_rate']:.1%} | {d['seconds']:.0f}s | {verdict} |")
+                     f"{d['near_dup_rate']:.1%} | {d['refusal_rate']:.1%} | {d['seconds']:.0f}s | {result} |")
     return "\n".join(lines) + "\n"
 
 
@@ -242,15 +293,21 @@ def main(argv: list[str] | None = None, make_client: Callable[[EndpointSettings]
         res = bench_document(pdf, target, args, make_client)
         print(f"  {res.records}/{target} pairs, faithfulness {res.faithfulness:.2f}, "
               f"near-dup {res.near_dup_rate:.1%}, refusals {res.refusal_rate:.1%}, {res.seconds:.0f}s"
-              + (f"  FAIL: {'; '.join(res.failures)}" if res.failures else "  ok"), flush=True)
+              + (f"  FAIL: {'; '.join(res.failures)}" if res.failures
+                 else f"  WARNING: {'; '.join(res.warnings)}" if res.warnings else "  ok"), flush=True)
         results.append(res)
         if res.fatal:
             print("Stopped: the endpoint refused the key, the access or the model, or the account has no "
                   "credits or quota left, so every other document would fail the same way.", file=sys.stderr, flush=True)
             break
+        if res.provider_down:
+            print("Stopped: the provider failed every request (HTTP 5xx, timeouts), so the other documents "
+                  "would get nothing either. Not a Brainbrew failure; try again later.", file=sys.stderr, flush=True)
+            break
 
     report = {
         "passed": all(not r.failures for r in results) and bool(results),
+        "provider_down": any(r.provider_down for r in results),
         "model": args.model,
         "judge_model": args.judge_model or args.model.split(",")[0].strip(),
         "base_url": args.base_url,
@@ -265,6 +322,10 @@ def main(argv: list[str] | None = None, make_client: Callable[[EndpointSettings]
     if summary := os.getenv("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as fh:
             fh.write(md)
+    if os.getenv("GITHUB_ACTIONS") == "true":  # annotations on the workflow run
+        for r in results:
+            for w in r.warnings:
+                print(f"::warning title=Provider errors ({r.document})::{w}. Not a Brainbrew failure.")
     return 0 if report["passed"] else 1
 
 

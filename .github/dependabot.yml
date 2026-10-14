@@ -9,9 +9,15 @@ updates:
     groups:
       python-minor-patch:
         update-types: [minor, patch]
-    # After merging a uv update, regenerate the exported files:
+    # requirements*.txt are exported from uv.lock with hashes. Dependabot's uv updater
+    # treats them as compiled files, fails to recompute their hashes (it builds index
+    # URLs like '/pypi/numpy/json') and then opens no pull request at all. It updates
+    # pyproject.toml and uv.lock only; regenerate the exports on the PR branch:
     #   uv export --frozen --no-dev --no-emit-project [--extra train] -o requirements*.txt
     # (CI's `lockfile` job fails until they match).
+    exclude-paths:
+      - "requirements.txt"
+      - "requirements-train.txt"
 
   - package-ecosystem: github-actions
     directory: /
