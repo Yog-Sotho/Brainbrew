@@ -16,12 +16,15 @@ Optional extras:
 
 | Extra | Adds |
 |---|---|
-| `uv sync --extra vllm` | `vllm serve`, a local GPU model server (Linux, NVIDIA) |
 | `uv sync --extra train` | LoRA training with TRL + PEFT |
 | `uv sync --extra pii` | Presidio name detection (then `python -m spacy download en_core_web_lg`) |
 
 Without uv: `pip install --require-hashes -r requirements.txt` (or
-`requirements-vllm.txt`, `-train.txt`, `-gpu.txt`).
+`requirements-train.txt` for core + LoRA training).
+
+A local GPU model server is not an extra: install vLLM in its own environment with
+`uv tool install --python 3.12 vllm==0.31.0` (Linux, NVIDIA), let `install.sh` do it,
+or run the official image with `docker compose` (see [Docker](docker.md)).
 
 ## Run the app
 

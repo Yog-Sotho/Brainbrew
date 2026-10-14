@@ -41,7 +41,8 @@ judge works too, but then it shares blind spots with the teacher.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh        # uv brings its own Python 3.12
 git clone https://github.com/Yog-Sotho/Brainbrew && cd Brainbrew
-uv sync --locked --extra vllm --extra train            # name both: syncing one extra removes the other
+uv sync --locked --extra train
+uv tool install --python 3.12 vllm==0.31.0             # vLLM in its own environment
 read -rs OPENAI_API_KEY && export OPENAI_API_KEY       # for the exam writer and the judge only
 ```
 
@@ -61,7 +62,7 @@ them `docs/*.pdf`.
 ## 2. Generate the training sets (teacher on the GPU)
 
 ```bash
-uv run vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ --host 127.0.0.1 --port 8000 \
+vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ --host 127.0.0.1 --port 8000 \
   --max-model-len 8192 --gpu-memory-utilization 0.90
 ```
 
@@ -117,7 +118,7 @@ app's default of one is tuned for style.
 vLLM serves the base model and both adapters from one process:
 
 ```bash
-uv run vllm serve Qwen/Qwen2.5-1.5B-Instruct --host 127.0.0.1 --port 8000 \
+vllm serve Qwen/Qwen2.5-1.5B-Instruct --host 127.0.0.1 --port 8000 \
   --enable-lora --lora-modules brainbrew=adapters/brainbrew control=adapters/control \
   --max-lora-rank 16 --max-model-len 4096 --gpu-memory-utilization 0.85
 ```

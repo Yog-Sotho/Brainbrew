@@ -19,6 +19,7 @@ trained_adapter/
 # Virtual environments
 venv/
 .venv/
+.venv-vllm/
 
 # Environment secrets
 .env

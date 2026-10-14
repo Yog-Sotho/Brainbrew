@@ -10,7 +10,7 @@ updates:
       python-minor-patch:
         update-types: [minor, patch]
     # After merging a uv update, regenerate the exported files:
-    #   uv export --frozen --no-dev --no-emit-project [--extra vllm|train] -o requirements*.txt
+    #   uv export --frozen --no-dev --no-emit-project [--extra train] -o requirements*.txt
     # (CI's `lockfile` job fails until they match).
 
   - package-ecosystem: github-actions

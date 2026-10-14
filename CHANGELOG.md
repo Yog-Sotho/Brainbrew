@@ -49,6 +49,11 @@ comments. The phases refer to
   last 200 are dropped from memory (their run folders stay).
 
 ### Security
+- setuptools 80.10.2 -> 84.0.0, fixing CVE-2026-59890 / GHSA-h35f-9h28-mq5c
+  (`MANIFEST.in` exclusions bypassed in sdists; the four Dependabot alerts). It was
+  held back only by vLLM's `setuptools<81` cap; with vLLM out of the lock (see
+  Removed) nothing caps it. The package itself is built with setuptools >= 83, and
+  CI's pip-audit no longer ignores the advisory.
 - Endpoint URLs pointing at link-local or cloud metadata addresses are
   rejected (SSRF), including numeric and IPv4-mapped spellings. At connect
   time the client also refuses hosts that *resolve* to such an address, and
@@ -93,6 +98,13 @@ comments. The phases refer to
   `ui/generate.py`.
 
 ### Removed
+- The `vllm` extra and `requirements-vllm.txt` / `requirements-gpu.txt`. Brainbrew
+  never imported vLLM; it talks to `vllm serve` over HTTP like any endpoint, so vLLM
+  now lives in its own environment with its own pins: `uv tool install vllm==0.31.0`,
+  `install.sh`'s `.venv-vllm` (used by `run_vllm.sh`), or the official image in
+  `compose.yaml`. The GPU Docker image is Brainbrew + LoRA training (`GPU_EXTRAS=train`),
+  and the release's GPU SBOM is now the training-stack SBOM (`-train-sbom.cdx.json`).
+  The lock drops from 288 to 182 packages.
 - Unused code: `exporter.deduplicate_records` (use `pipeline.dedup.deduplicate`),
   `pii.URL_POLICIES` and `quality.GRADES`.
 

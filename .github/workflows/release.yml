@@ -46,8 +46,8 @@ jobs:
         run: |
           uvx --from "$CYCLONEDX" cyclonedx-py requirements requirements.txt --of JSON --validate \
             -o "dist/brainbrew-$VERSION-sbom.cdx.json"
-          uvx --from "$CYCLONEDX" cyclonedx-py requirements requirements-gpu.txt --of JSON --validate \
-            -o "dist/brainbrew-$VERSION-gpu-sbom.cdx.json"
+          uvx --from "$CYCLONEDX" cyclonedx-py requirements requirements-train.txt --of JSON --validate \
+            -o "dist/brainbrew-$VERSION-train-sbom.cdx.json"
       - name: Sign with Sigstore
         run: uvx "$SIGSTORE" sign dist/*
       - name: Verify the signatures

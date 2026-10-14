@@ -5,8 +5,10 @@
 | Image | Build | For |
 |---|---|---|
 | CPU (`api` target) | `docker build --target api -t brainbrew-api .` | OpenAI or any OpenAI-compatible endpoint; the CLI |
-| GPU (default) | `docker build -t brainbrew .` | `vllm serve` and LoRA training (NVIDIA driver R580+, CUDA 13.0) |
-| GPU without training | `docker build --build-arg GPU_EXTRAS=vllm -t brainbrew-vllm .` | `vllm serve` only |
+| GPU (default) | `docker build -t brainbrew .` | LoRA training (NVIDIA driver R580+, CUDA 13.0) |
+
+vLLM is not installed in either image. For a local model server, `compose.yaml`
+runs the official vLLM image next to the app (below).
 
 Images run as a non-root user (uid 10001), log JSON lines, and never contain
 `.env` or `.streamlit/secrets.toml` (`.dockerignore` is an allow-list).

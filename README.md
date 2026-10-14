@@ -100,14 +100,13 @@ cd Brainbrew</code></pre>
 <p>Dependencies are locked in <code>uv.lock</code>. Add the extras you need:</p>
 <pre><code># with uv (recommended)
 uv sync                    # core: any OpenAI-compatible endpoint, any OS
-uv sync --extra vllm       # + `vllm serve`, a local GPU model server (Linux, NVIDIA)
 uv sync --extra train      # + LoRA training with TRL + PEFT (an NVIDIA GPU for real models)
-uv sync --extra vllm --extra train   # both
 uv sync --extra pii        # + Presidio name detection (then: python -m spacy download en_core_web_lg)
+uv tool install --python 3.12 vllm==0.31.0   # optional: `vllm serve`, a local GPU model server (Linux, NVIDIA), in its own environment
 
 # or with pip (hash-pinned exports of the same lock)
 python3.12 -m venv .venv &amp;&amp; source .venv/bin/activate
-pip install --require-hashes -r requirements.txt          # or requirements-vllm.txt / -train.txt / -gpu.txt (both)
+pip install --require-hashes -r requirements.txt          # or requirements-train.txt (core + LoRA training)
 cp .env.sample .env</code></pre>
 
 <p>Edit <code>.env</code>:</p>
@@ -127,6 +126,7 @@ brainbrew runs show &lt;run-id&gt;                  # the full manifest</code></
 
 <p>No API key? Run a model on your own GPU and pick <em>Local vLLM server</em> in the sidebar:</p>
 <pre><code>vllm serve Qwen/Qwen3-4B-Instruct-2507      # or: bash run_vllm.sh (written by install.sh)</code></pre>
+<p>vLLM is not a Brainbrew dependency: it is a separate server Brainbrew talks to over HTTP, so it lives in its own environment (<code>uv tool install</code>, <code>install.sh</code>'s <code>.venv-vllm</code>, or the official image in <code>compose.yaml</code>) with its own pinned packages.</p>
 
 <p><strong>Boom.</strong> Browser opens. You're now a dataset wizard.</p>
 
@@ -144,12 +144,9 @@ docker run -p 127.0.0.1:8501:8501 --env-file .env brainbrew-api
 docker run --rm -v "$PWD:/data" -v brainbrew-runs:/app/runs -e OPENAI_API_KEY brainbrew-api \
     python cli.py run /data/notes.pdf -o /data/dataset.jsonl
 
-# GPU image (`vllm serve` + LoRA training). Needs NVIDIA driver R580+ (CUDA 13.0).
+# GPU image (LoRA training). Needs NVIDIA driver R580+ (CUDA 13.0). For a model server, use compose above.
 docker build -t brainbrew .
 docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env brainbrew
-
-# GPU image without the LoRA training stack
-docker build --build-arg GPU_EXTRAS=vllm -t brainbrew-vllm .
 
 # Keep runs (datasets, adapters) across container restarts
 docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/app/runs brainbrew</code></pre>

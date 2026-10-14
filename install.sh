@@ -19,6 +19,10 @@ readonly ENV_FILE=".env"
 readonly ENV_SAMPLE=".env.sample"
 REQUIREMENTS="requirements.txt"   # core (OpenAI API mode); see section 11
 readonly LOG_FILE="install.log"
+# vLLM (GPU mode) gets its own environment: Brainbrew only talks to `vllm serve` over HTTP,
+# and vLLM pins dependencies Brainbrew doesn't share (e.g. setuptools<81).
+readonly VLLM_VENV_DIR=".venv-vllm"
+readonly VLLM_VERSION="0.31.0"   # keep in step with the vllm/vllm-openai tag in compose.yaml
 
 # ANSI colours (disabled automatically when not a terminal)
 if [[ -t 1 ]]; then
@@ -266,7 +270,7 @@ if [[ "$MODE" == "docker" ]]; then
     warn "Copied .env.sample -> .env. Edit it with real API keys before running the container."
   fi
 
-  # GPU image (vLLM) only when a GPU is present; otherwise the slim API image.
+  # GPU image (LoRA training) only when a GPU is present; otherwise the slim API image.
   DOCKER_TARGET="api"
   [[ "$HAS_GPU" == true ]] && DOCKER_TARGET="gpu"
   log "Building Docker image: brainbrew (target: ${DOCKER_TARGET}) ..."
@@ -357,12 +361,11 @@ if [[ "$HAS_GPU" == false ]]; then
   log "No GPU detected: installing the core stack (OpenAI-compatible API mode)."
 fi
 
-# Pick the locked requirement set for this machine. All four files are
-# generated from uv.lock (`uv export`) and carry hashes, so pip verifies every
-# download.
+# Pick the locked requirement set for this machine. Both files are generated
+# from uv.lock (`uv export`) and carry hashes, so pip verifies every download.
 if [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
-  REQUIREMENTS="requirements-gpu.txt"
-  log "GPU with >= 24 GB VRAM: installing vLLM + LoRA training stack."
+  REQUIREMENTS="requirements-train.txt"
+  log "GPU with >= 24 GB VRAM: installing the LoRA training stack (vLLM follows in ${VLLM_VENV_DIR})."
 elif [[ "$RECOMMENDED_MODE" == "openai_with_lora" || "$WITH_TRAIN" == true ]]; then
   REQUIREMENTS="requirements-train.txt"
   log "Installing core + LoRA training stack (generation via an OpenAI-compatible API)."
@@ -378,7 +381,17 @@ log "Installing ${TOTAL_PKGS} pinned packages from ${REQUIREMENTS} (this may tak
 if "$PIP_CMD" install --quiet --require-hashes -r "$REQUIREMENTS" 2>&1 | tee -a "$LOG_FILE"; then
   ok "All dependencies installed successfully."
 else
-  die "Dependency install failed. See ${LOG_FILE}. vLLM and bitsandbytes require Linux + CUDA; on other systems use the default (core) install."
+  die "Dependency install failed. See ${LOG_FILE}. bitsandbytes requires Linux + CUDA; on other systems use the default (core) install."
+fi
+
+if [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
+  log "Installing vLLM ${VLLM_VERSION} into its own environment (${VLLM_VENV_DIR}) ..."
+  [[ -d "$VLLM_VENV_DIR" ]] || "$PYTHON_CMD" -m venv "$VLLM_VENV_DIR" 2>&1 | tee -a "$LOG_FILE"
+  if "${VLLM_VENV_DIR}/bin/pip" install --quiet "vllm==${VLLM_VERSION}" 2>&1 | tee -a "$LOG_FILE"; then
+    ok "vLLM ${VLLM_VERSION} installed in ${VLLM_VENV_DIR}."
+  else
+    die "vLLM install failed. See ${LOG_FILE}. vLLM requires Linux + an NVIDIA GPU with CUDA drivers."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -487,9 +500,13 @@ if [[ "$SKIP_TESTS" == false ]]; then
   _test_import "huggingface_hub"           "huggingface_hub"          || IMPORT_FAILURES=$(( IMPORT_FAILURES + 1 ))
   _test_import "openai"                    "openai"                   || IMPORT_FAILURES=$(( IMPORT_FAILURES + 1 ))
 
-  # GPU-only imports -- warn but don't count as failure
-  if [[ "$HAS_GPU" == true ]]; then
-    _test_import "vllm" "vllm" || warn "vLLM import failed -- ensure CUDA drivers are installed."
+  # vLLM lives in its own environment -- warn but don't count as failure
+  if [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
+    if "${VLLM_VENV_DIR}/bin/python" -c "import vllm" 2>>"$LOG_FILE"; then
+      ok "  + vllm (${VLLM_VENV_DIR})"
+    else
+      warn "vLLM import failed -- ensure CUDA drivers are installed."
+    fi
   fi
 
   if [[ "$IMPORT_FAILURES" -gt 0 ]]; then
@@ -558,12 +575,10 @@ if [[ "$RECOMMENDED_MODE" == "vllm" ]]; then
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-if [[ -f ".venv/bin/activate" ]]; then
-  source ".venv/bin/activate"
-fi
+[[ -x ".venv-vllm/bin/vllm" ]] || { echo "vLLM is not installed in .venv-vllm -- rerun install.sh on a GPU machine." >&2; exit 1; }
 MODEL="${1:-Qwen/Qwen3-4B-Instruct-2507}"
 shift || true
-exec vllm serve "$MODEL" --host 127.0.0.1 --port 8000 "$@"
+exec .venv-vllm/bin/vllm serve "$MODEL" --host 127.0.0.1 --port 8000 "$@"
 VLLMSCRIPT
   chmod +x run_vllm.sh
   ok "Created run_vllm.sh"
