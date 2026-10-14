@@ -8,7 +8,7 @@ version = "2.0.0"
 description = "No-code synthetic LLM training dataset generator"
 readme = "README.md"
 license = "MIT"
-# vLLM supports Python 3.10–3.13; keep the upper bound so the universal lock resolves.
+# The upper bound keeps the universal lock to the versions listed in the classifiers.
 requires-python = ">=3.12,<3.14"
 authors = [
     {name = "YogSotho"},
@@ -46,11 +46,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local GPU inference server: provides `vllm serve`, an OpenAI-compatible endpoint
-# Brainbrew talks to like any other (see README, compose.yaml).
-vllm = [
-    "vllm>=0.30.0; sys_platform == 'linux'",
-]
+# No vLLM extra: Brainbrew talks to `vllm serve` over HTTP like any other endpoint, so vLLM
+# runs in its own environment (install.sh's .venv-vllm, or the official image in
+# compose.yaml) with its own pins (it caps setuptools<81, below the CVE-2026-59890 fix).
+
 # Local LoRA fine-tuning (TRL + PEFT; 4-bit QLoRA via bitsandbytes on CUDA).
 train = [
     "torch>=2.6",
@@ -92,15 +91,6 @@ Issues = "https://github.com/Yog-Sotho/Brainbrew/issues"
 
 [project.scripts]
 brainbrew = "cli:main"
-
-[tool.uv]
-# vLLM 0.31.0 (the latest) still caps setuptools<81 "for triton", which pins it below
-# 83.0.0, the fix for CVE-2026-59890 / GHSA-h35f-9h28-mq5c. The cap predates setuptools 82
-# removing pkg_resources; nothing in the GPU environment needs pkg_resources on Python 3.12
-# (checked: vllm, triton, torch, flashinfer and every other package in requirements-gpu.txt;
-# sentry-sdk and supervisor only fall back to it on Python < 3.8). Drop this once vLLM
-# lifts the cap.
-override-dependencies = ["setuptools>=83"]
 
 [tool.setuptools]
 py-modules = ["app", "cli", "config", "orchestrator"]

@@ -2,16 +2,16 @@
 #
 # Brainbrew images, built from the locked dependency set (uv.lock).
 #
-#   docker build -t brainbrew .                         # GPU image (`vllm serve` + LoRA training), default
+#   docker build -t brainbrew .                         # GPU image (LoRA training), default
 #   docker build --target api -t brainbrew-api .        # CPU image: any OpenAI-compatible endpoint
-#   docker build --build-arg GPU_EXTRAS=vllm -t brainbrew-vllm .    # GPU image without training
 #
 #   docker run --rm -v "$PWD:/data" -v brainbrew-runs:/app/runs -e OPENAI_API_KEY brainbrew-api \
 #       python cli.py run /data/notes.pdf -o /data/dataset.jsonl    # headless CLI
 #
 # Generation talks to an OpenAI-compatible server. compose.yaml runs the CPU
-# image next to the official vLLM server image, which is the simplest local
-# setup; the GPU image is only needed for LoRA training inside the container.
+# image next to the official vLLM server image (vLLM isn't installed in these
+# images: it keeps its own dependency pins); the GPU image is only needed for
+# LoRA training inside the container.
 #
 #   docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env \
 #       -v brainbrew-runs:/app/runs brainbrew
@@ -72,13 +72,13 @@ CMD ["streamlit", "run", "app.py"]
 
 FROM ${CUDA_IMAGE} AS gpu-base
 # Ubuntu 24.04 ships Python 3.12. gcc + headers are runtime requirements:
-# Triton (used by vLLM / torch.compile) JIT-compiles a C launcher stub.
+# Triton (used by torch.compile) JIT-compiles a C launcher stub.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3.12 python3.12-dev gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 FROM gpu-base AS gpu-builder
-ARG GPU_EXTRAS="vllm train"
+ARG GPU_EXTRAS="train"
 COPY --from=uv /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

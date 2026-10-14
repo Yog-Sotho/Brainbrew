@@ -48,7 +48,7 @@ jobs:
       - name: CycloneDX SBOM of the locked dependencies
         run: |
           uvx --from cyclonedx-bom==7.5.0 cyclonedx-py requirements requirements.txt --of JSON --validate -o sbom.cdx.json
-          uvx --from cyclonedx-bom==7.5.0 cyclonedx-py requirements requirements-gpu.txt --of JSON --validate -o sbom-gpu.cdx.json
+          uvx --from cyclonedx-bom==7.5.0 cyclonedx-py requirements requirements-train.txt --of JSON --validate -o sbom-train.cdx.json
 
   docs:
     runs-on: ubuntu-latest
@@ -151,9 +151,7 @@ jobs:
               || { echo "::error file=$out::$out is stale. Regenerate with: uv export --frozen --no-dev --no-emit-project $* -o $out"; exit 1; }
           }
           check requirements.txt
-          check requirements-vllm.txt --extra vllm
           check requirements-train.txt --extra train
-          check requirements-gpu.txt --extra vllm --extra train
 
   audit:
     runs-on: ubuntu-latest
@@ -169,10 +167,10 @@ jobs:
           inputs: requirements.txt
           require-hashes: true
           no-deps: true
-      - name: pip-audit (vLLM + train)
+      - name: pip-audit (train)
         uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
         with:
-          inputs: requirements-gpu.txt
+          inputs: requirements-train.txt
           require-hashes: true
           no-deps: true
 
@@ -195,7 +193,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # The GPU target (multi-GB vLLM/torch stack) exceeds hosted-runner disk;
+      # The GPU target (multi-GB CUDA torch stack) exceeds hosted-runner disk;
       # build the API target, which exercises the same uv/lock/user layout.
       - name: Build API image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
