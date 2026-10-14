@@ -60,6 +60,7 @@ class FakeOpenAI:
     reject_json_object: bool = False      # 400 on response_format=json_object too
     reject_status: int = 400              # llama-cpp-python's server rejects with 500
     server_error_first: bool = False      # first request gets a plain 500
+    server_down: bool = False             # every request gets a 500 (a provider outage)
     garbage_json_first: bool = False      # first structured reply is not JSON
     refuse_every: int = 0                 # every Nth answer is a refusal
     low_score_every: int = 0              # every Nth judge call scores 2
@@ -104,6 +105,10 @@ class FakeOpenAI:
                 "code": "credit_balance_exhausted"}})
         if self.rate_limit_first and self._bump("http") == 1:
             return httpx2.Response(429, headers={"retry-after": "0"}, json={"error": {"message": "slow down"}})
+        if self.server_down:
+            self._bump("server_down")
+            return httpx2.Response(500, json={"error": {"code": 500, "message": "Internal error encountered.",
+                                                        "status": "INTERNAL"}})
         if self.server_error_first and self._bump("server_error") == 1:
             return httpx2.Response(500, json={"error": {"message": "CUDA error: out of memory"}})
         body = json.loads(request.content)

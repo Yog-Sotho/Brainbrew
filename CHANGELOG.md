@@ -67,6 +67,15 @@ comments. The phases refer to
   Debian vulnerabilities (found by the new Trivy scan).
 
 ### Fixed
+- The nightly benchmark no longer goes red when the model provider is down. On
+  2026-10-13 and 14 Google answered `500 Internal error` to many or all
+  `gemma-4-31b-it` requests: one night a document fell short of its yield, the
+  next nothing was generated. A shortfall the provider's failed requests account
+  for is now a warning, and a document with no pairs because every request failed
+  stops the run as "not measured". Quality gates still fail as before.
+- Dependabot's uv updates opened no pull requests: its updater could not recompute
+  the hashes in the exported `requirements*.txt` and failed on every dependency.
+  It now skips those files; regenerate them with `uv export` on the PR branch.
 - An empty `OPENAI_BASE_URL` (what an undefined CI variable expands to) made
   the SDK send every request to a URL without a scheme, so the first real
   benchmark run failed all 252 requests. The engine now treats an empty value

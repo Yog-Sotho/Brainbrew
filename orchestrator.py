@@ -49,7 +49,7 @@ from pipeline.version import __version__
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["RunCancelled", "RunResult", "run_distillation"]
+__all__ = ["NoPairsError", "RunCancelled", "RunResult", "run_distillation"]
 
 MAX_SOURCE_BYTES: int = 100 * 1024 * 1024  # 100 MB
 
@@ -175,6 +175,16 @@ def _sanitize(records: list[Record], cfg: DistillationConfig, run: RunDir) -> li
             "Turn off 'Clean & sanitize' or use a longer source document."
         )
     return kept
+
+
+class NoPairsError(RuntimeError):
+    """Generation left no usable pair. ``stats`` holds the generation counters
+    (failed requests, last error, judge rejections), so callers can tell a
+    provider outage from a quality problem."""
+
+    def __init__(self, message: str, stats: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.stats = stats
 
 
 # ---------------------------------------------------------------------------
@@ -381,12 +391,13 @@ def _generate_stage(
                             cost_usd=run_cost(usage, is_local(cfg.base_url)))
         logger.info("Generation finished", **{k: v for k, v in stats.as_dict().items() if k != "answers_filtered"})
     if not records:
-        raise RuntimeError(
+        raise NoPairsError(
             "No usable question/answer pairs were produced "
             f"({stats.errors} failed requests, {stats.judge_rejected} rejected by the judge, "
             f"{sum(stats.answers_filtered.values())} filtered answers)"
             + (f"; last error: {stats.last_error}" if stats.last_error else "")
-            + ". Check the model name, API key / endpoint and the logs, then try again."
+            + ". Check the model name, API key / endpoint and the logs, then try again.",
+            stats.as_dict(),
         )
     return records
 
