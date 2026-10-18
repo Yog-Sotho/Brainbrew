@@ -74,7 +74,7 @@ picks the model provider:
 To run the benchmark locally for free against your own GPU:
 
 ```bash
-vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ --max-model-len 8192          # terminal 1 (uv tool install vllm)
+vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ --max-model-len 8192          # terminal 1 (uv tool install --python 3.12 vllm==0.31.0)
 uv run python bench/run_bench.py --base-url http://127.0.0.1:8000/v1 \
   --model Qwen/Qwen2.5-7B-Instruct-AWQ --concurrency 4                # terminal 2
 ```

@@ -39,7 +39,7 @@ No API key? Start a local model server and pick **Local vLLM server** in the
 sidebar:
 
 ```bash
-vllm serve Qwen/Qwen3-4B-Instruct-2507    # or: bash run_vllm.sh
+vllm serve Qwen/Qwen3-4B-Instruct-2507    # or: bash run_vllm.sh (install.sh, 24 GB+ VRAM)
 ```
 
 ## Run from the command line
