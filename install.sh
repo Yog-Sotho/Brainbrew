@@ -14,6 +14,7 @@ IFS=$'\n\t'
 readonly SCRIPT_VERSION="1.2.0"
 readonly REQUIRED_PYTHON_MAJOR=3
 readonly REQUIRED_PYTHON_MINOR=12
+readonly MAX_PYTHON_MINOR=13  # pyproject.toml: requires-python = ">=3.12,<3.14"
 readonly VENV_DIR=".venv"
 readonly ENV_FILE=".env"
 readonly ENV_SAMPLE=".env.sample"
@@ -163,12 +164,13 @@ fi
 
 # -- Python version --------------------------------------------------------
 PYTHON_CMD=""
-for cmd in python3.12 python3.13 python3.14 python3; do
+for cmd in python3.12 python3.13 python3; do
   if command -v "$cmd" &>/dev/null; then
     PY_MAJOR=$("$cmd" -c "import sys; print(sys.version_info.major)" 2>/dev/null || echo "0")
     PY_MINOR=$("$cmd" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || echo "0")
     if [[ "$PY_MAJOR" -eq "$REQUIRED_PYTHON_MAJOR" ]] && \
-       [[ "$PY_MINOR" -ge "$REQUIRED_PYTHON_MINOR" ]]; then
+       [[ "$PY_MINOR" -ge "$REQUIRED_PYTHON_MINOR" ]] && \
+       [[ "$PY_MINOR" -le "$MAX_PYTHON_MINOR" ]]; then
       PYTHON_CMD="$cmd"
       break
     fi
@@ -176,7 +178,7 @@ for cmd in python3.12 python3.13 python3.14 python3; do
 done
 
 if [[ -z "$PYTHON_CMD" ]]; then
-  error "Python ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR}+ is required but was not found."
+  error "Python ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR} or ${REQUIRED_PYTHON_MAJOR}.${MAX_PYTHON_MINOR} is required but was not found."
   echo ""
   case "$PKG_MANAGER" in
     apt)    echo "  -> sudo apt install python3.12 python3.12-venv python3.12-dev" ;;
@@ -184,7 +186,7 @@ if [[ -z "$PYTHON_CMD" ]]; then
     pacman) echo "  -> sudo pacman -S python" ;;
     brew)   echo "  -> brew install python@3.12" ;;
   esac
-  die "Please install Python ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR}+ and re-run."
+  die "Please install Python ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR} or ${REQUIRED_PYTHON_MAJOR}.${MAX_PYTHON_MINOR} and re-run."
 fi
 
 PY_VERSION=$("$PYTHON_CMD" --version 2>&1)

@@ -6,7 +6,7 @@
   <p>
     <a href="https://github.com/Yog-Sotho/Brainbrew/actions/workflows/ci.yml"><img src="https://github.com/Yog-Sotho/Brainbrew/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
-    <img src="https://img.shields.io/badge/Python-3.12+-blue.svg" alt="Python 3.12+">
+    <img src="https://img.shields.io/badge/Python-3.12%E2%80%933.13-blue.svg" alt="Python 3.12–3.13">
     <img src="https://img.shields.io/badge/Docker-Ready-blue.svg" alt="Docker Ready">
     <img src="https://img.shields.io/badge/for_non-tech_users-8A2BE2.svg" alt="For non-tech users">
     <img src="https://img.shields.io/badge/OpenAI--compatible-any_endpoint-purple.svg" alt="Any OpenAI-compatible endpoint">
@@ -61,7 +61,7 @@
   <li><strong>Headless CLI</strong> — <code>brainbrew run docs/*.pdf --config cfg.yaml</code> for scripts and servers, same pipeline as the UI</li>
   <li><strong>Error handling &amp; progress bars</strong> — failures are shown in the UI and recorded in the run manifest</li>
   <li><strong>Docker ready</strong> — run it anywhere without summoning the dependency demon</li>
-  <li><strong>~540 automated tests</strong> — the real pipeline against an in-memory model server, and real LoRA training, run in CI on every PR; a nightly benchmark checks generation quality with a real model</li>
+  <li><strong>~700 automated tests</strong> — the real pipeline against an in-memory model server, and real LoRA training, run in CI on every PR; a nightly benchmark checks generation quality with a real model</li>
 </ul>
 
 <p>In short: it's what every AI guy <em>wanted</em> and never found anywhere.</p>
@@ -91,7 +91,7 @@
 <pre><code>git clone https://github.com/Yog-Sotho/Brainbrew.git
 cd Brainbrew</code></pre>
 
-<h3>2. Run the installer (Python 3.12+)</h3>
+<h3>2. Run the installer (Python 3.12 or 3.13)</h3>
 <pre><code>bash install.sh</code></pre>
 
 <p>The installer handles everything: Python version check, virtual environment, pip dependencies, GPU detection, and <code>.env</code> setup.</p>
@@ -115,17 +115,18 @@ HF_TOKEN=hf_...
 HF_USERNAME=yourusername</code></pre>
 
 <h3>4. Run It</h3>
-<pre><code>streamlit run app.py</code></pre>
+<pre><code>uv run streamlit run app.py</code></pre>
 
 <p>Or without a browser:</p>
-<pre><code>brainbrew run notes.pdf --model gpt-4o-mini --size 200 --format sharegpt -o dataset.jsonl
-brainbrew run docs/*.pdf --config cfg.yaml     # any setting, YAML or JSON; secrets stay in the environment
-brainbrew runs list                            # recent runs (web and CLI share the runs folder)
-brainbrew runs show &lt;run-id&gt;                  # the full manifest</code></pre>
+<pre><code>uv run brainbrew run notes.pdf --model gpt-4o-mini --size 200 --format sharegpt -o dataset.jsonl
+uv run brainbrew run docs/*.pdf --config cfg.yaml   # any setting, YAML or JSON; secrets stay in the environment
+uv run brainbrew runs list                          # recent runs (web and CLI share the runs folder)
+uv run brainbrew runs show &lt;run-id&gt;                # the full manifest</code></pre>
+<p>Installed with <code>install.sh</code> or pip instead? Activate the environment (<code>source .venv/bin/activate</code>), then run <code>streamlit run app.py</code> and <code>python cli.py run …</code>: those routes install the dependencies, not the <code>brainbrew</code> command.</p>
 <p>Ctrl-C cancels a CLI run cleanly (it is recorded as cancelled). Exit codes: 0 success, 1 failed, 2 bad input, 130 cancelled.</p>
 
 <p>No API key? Run a model on your own GPU and pick <em>Local vLLM server</em> in the sidebar:</p>
-<pre><code>vllm serve Qwen/Qwen3-4B-Instruct-2507      # or: bash run_vllm.sh (written by install.sh)</code></pre>
+<pre><code>vllm serve Qwen/Qwen3-4B-Instruct-2507      # or: bash run_vllm.sh (written by install.sh on GPUs with 24 GB+ VRAM)</code></pre>
 <p>vLLM is not a Brainbrew dependency: it is a separate server Brainbrew talks to over HTTP, so it lives in its own environment (<code>uv tool install</code>, <code>install.sh</code>'s <code>.venv-vllm</code>, or the official image in <code>compose.yaml</code>) with its own pinned packages.</p>
 
 <p><strong>Boom.</strong> Browser opens. You're now a dataset wizard.</p>
@@ -179,7 +180,7 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/
     <tr><td><code>BRAINBREW_DEFAULT_MODEL</code></td><td>Pre-filled teacher model (UI and CLI)</td></tr>
     <tr><td><code>BRAINBREW_MAX_JOBS</code></td><td>Runs the web server executes at once (default 2); LoRA training always takes the machine's single GPU slot in turn, across the UI and the CLI</td></tr>
     <tr><td><code>BRAINBREW_RUNS_DIR</code></td><td>Where run folders go (default <code>./runs</code>)</td></tr>
-    <tr><td><code>BRAINBREW_LOG_FORMAT</code> / <code>BRAINBREW_LOG_LEVEL</code></td><td><code>json</code> or <code>console</code> (auto: JSON in containers), and the level</td></tr>
+    <tr><td><code>BRAINBREW_LOG_FORMAT</code> / <code>BRAINBREW_LOG_LEVEL</code></td><td><code>json</code> or <code>console</code> (auto: JSON in containers or when output is not a terminal), and the level</td></tr>
     <tr><td><code>BRAINBREW_REQUIRE_LOGIN=1</code></td><td>OIDC login on every page (configure <code>[auth]</code> in <code>.streamlit/secrets.toml</code>)</td></tr>
   </tbody>
 </table>
@@ -218,6 +219,9 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/
   <li><strong>Clean &amp; sanitize</strong> — PII redaction with a choice for links (keep the site only / remove / keep) and optional Presidio name detection</li>
   <li><strong>Remove benchmark overlap</strong> — drop pairs sharing a 13-word passage with the selected public test sets</li>
   <li><strong>Generation settings</strong> — temperature, max answer length, parallel requests, request timeout, judge model and minimum judge score, and an embedding model for paraphrase removal</li>
+</ul>
+<p>In the main panel, under the <em>Auto-train</em> and <em>Publish</em> checkboxes:</p>
+<ul>
   <li><strong>Publishing</strong> — license for the dataset card, <em>Make it public</em> (repos are private otherwise), and <em>Also publish the LoRA adapter</em> (as <code>&lt;dataset repo&gt;-lora</code>)</li>
   <li><strong>LoRA settings</strong> — base model (default <code>Qwen/Qwen3-4B-Instruct-2507</code>) and rank, shown when auto-train is on</li>
 </ul>
@@ -233,7 +237,7 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/
   <li><strong>TRL + PEFT</strong> – LoRA / QLoRA fine-tuning, loss on answers only</li>
   <li><strong>LangChain text splitters</strong> – character &amp; semantic chunking</li>
   <li><strong>Pydantic + Structlog</strong> – no more "it worked on my machine" excuses</li>
-  <li><strong>pytest</strong> – ~540 tests with CI via GitHub Actions</li>
+  <li><strong>pytest</strong> – ~700 tests with CI via GitHub Actions</li>
   <li><strong>Typer + Rich</strong> – the <code>brainbrew</code> command line</li>
   <li><strong>uv</strong> – locked, hash-verified dependencies</li>
 </ul>
@@ -292,7 +296,7 @@ docker run --gpus all -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/
 
 <h2>Testing</h2>
 
-<p>Brainbrew ships with about 540 automated tests. Pipeline tests run the <em>real</em> async engine and openai SDK against an in-memory OpenAI-compatible server that can misbehave on demand (rate limits, broken JSON, refusals, missing structured-output support); app tests drive the real Streamlit app (upload → generate → download); LoRA tests run real TRL + PEFT training on tiny models. Also covered: config validation, security (API keys never reach logs, run folders, the browser or a URL the visitor chose), all four export formats, PII, dedup, decontamination and HF publishing. No GPU or API key required.</p>
+<p>Brainbrew ships with about 700 automated tests. Pipeline tests run the <em>real</em> async engine and openai SDK against an in-memory OpenAI-compatible server that can misbehave on demand (rate limits, broken JSON, refusals, missing structured-output support); app tests drive the real Streamlit app (upload → generate → download); LoRA tests run real TRL + PEFT training on tiny models. Also covered: config validation, security (API keys never reach logs, run folders, the browser or a URL the visitor chose), all four export formats, PII, dedup, decontamination and HF publishing. No GPU or API key required.</p>
 
 <pre><code>uv run pytest                          # all tests (uses the locked core env + dev tools)
 uv run pytest tests/test_security.py   # just security tests
