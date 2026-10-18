@@ -6,7 +6,12 @@ All notable changes to Brainbrew. The format follows
 comments. The phases refer to
 [the roadmap](https://github.com/Yog-Sotho/Brainbrew/blob/main/docs/project/sota_roadmap.md).
 
-## [Unreleased]: Phase 4, hardening, and audit follow-ups
+## [Unreleased]
+
+## [3.0.0] - 2026-10-18: Phase 4, hardening, and audit follow-ups
+
+A major version because two things are removed (see *Removed*): the `vllm` extra
+(vLLM now runs in its own environment) and three unused functions.
 
 ### Added
 - The documentation is published to GitHub Pages at
@@ -67,6 +72,7 @@ comments. The phases refer to
   Debian vulnerabilities (found by the new Trivy scan).
 
 ### Fixed
+- `narwhals` 2.27.0 (a Streamlit dependency) was yanked upstream; the lock moves to 2.27.1.
 - The nightly benchmark no longer goes red when the model provider is down. On
   2026-10-13 and 14 Google answered `500 Internal error` to many or all
   `gemma-4-31b-it` requests: one night a document fell short of its yield, the

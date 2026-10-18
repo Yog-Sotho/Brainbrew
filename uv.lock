@@ -294,7 +294,7 @@ wheels = [
 
 [[package]]
 name = "brainbrew"
-version = "2.0.0"
+version = "3.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "datasets" },
@@ -1671,11 +1671,11 @@ wheels = [
 
 [[package]]
 name = "narwhals"
-version = "2.27.0"
+version = "2.27.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f3/2e/325e6682e3ccdef9b7c681adfe0273e0b6bf5a90c759ecddbad06e619b55/narwhals-2.27.0.tar.gz", hash = "sha256:27a1b68b94c36bbe60ecc63fb9b37674a85a98bee3f45d179cbdc0a872bc9b8d", size = 708131, upload-time = "2026-10-05T11:15:06.121Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/21/f64d6b2dbea7bf3f8c38cdc786dcc6ef012ca3d173ad208c782c9a7bedf6/narwhals-2.27.1.tar.gz", hash = "sha256:aed93076a3ea42d9c32c88e4eb5ea422a21937011cbe1f480f9572a523c82094", size = 735013, upload-time = "2026-10-10T06:52:18.113Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/16/67/1f0b582e73ce46511f2799cbdcdbdf9ca98f344f2aad42ff5ff5dde0d8fe/narwhals-2.27.0-py3-none-any.whl", hash = "sha256:9d5661f93a10cfb2b2cc2b3e6e866541dea1b05706a3bcd22f633d70cfae3067", size = 483037, upload-time = "2026-10-05T11:15:04.351Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/89/5d4c86da1130d9059681e5b6cd7645df5c10279a6a079c5c37dcb2cc6f3f/narwhals-2.27.1-py3-none-any.whl", hash = "sha256:d057df13f5852b8e157596e82eb5e955fad267425df5e420e0ee9863da483b31", size = 483211, upload-time = "2026-10-10T06:52:16.32Z" },
 ]
 
 [[package]]

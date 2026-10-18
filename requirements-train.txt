@@ -614,9 +614,9 @@ multiprocess==0.70.19 \
     --hash=sha256:952021e0e6c55a4a9fe4cd787895b86e239a40e76802a789d6305398d3975897 \
     --hash=sha256:97404393419dcb2a8385910864eedf47a3cadf82c66345b44f036420eb0b5d87
     # via datasets
-narwhals==2.27.0 \
-    --hash=sha256:27a1b68b94c36bbe60ecc63fb9b37674a85a98bee3f45d179cbdc0a872bc9b8d \
-    --hash=sha256:9d5661f93a10cfb2b2cc2b3e6e866541dea1b05706a3bcd22f633d70cfae3067
+narwhals==2.27.1 \
+    --hash=sha256:aed93076a3ea42d9c32c88e4eb5ea422a21937011cbe1f480f9572a523c82094 \
+    --hash=sha256:d057df13f5852b8e157596e82eb5e955fad267425df5e420e0ee9863da483b31
     # via altair
 networkx==3.7 \
     --hash=sha256:e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0 \

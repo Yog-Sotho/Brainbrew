@@ -30,7 +30,7 @@
 
 <p>We took the original prototype, <strong>slayed every bug</strong>, rebuilt generation so every answer is grounded in your documents and checked by an LLM judge, added semantic chunking, multi-model ensemble, near-duplicate and paraphrase removal, benchmark decontamination, PII scrubbing, quality scoring, progress bars, Docker, and a bunch of other goodies… then wrapped it in a shiny Streamlit UI that even your grandma could use.</p>
 
-<p><strong>Current version: v2.0.0</strong></p>
+<p><strong>Current version: v3.0.0</strong></p>
 
 <div align="center">
   <img src="assets/knowledge.png" alt="Knowledge inputs flowing into Brainbrew" width="480" style="margin: 20px 0;">
