@@ -42,6 +42,14 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Build wheel and sdist
         run: uv build -o dist
+      - name: Collect distributions for PyPI
+        run: |
+          mkdir -p pypi-dist
+          cp dist/*.whl dist/*.tar.gz pypi-dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: pypi-dist/
       - name: SBOMs (CycloneDX)
         run: |
           uvx --from "$CYCLONEDX" cyclonedx-py requirements requirements.txt --of JSON --validate \
@@ -70,3 +78,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release create "$TAG" dist/* --title "Brainbrew $VERSION" --notes-file notes.md --verify-tag
+
+  # PyPI upload via Trusted Publishing. Independent of the signed GitHub
+  # release above: a PyPI configuration problem never loses the release or
+  # its tag, and re-running after a failed upload reuses the existing release.
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write       # Trusted Publishing; also uploads PEP 740 attestations
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
