@@ -8,6 +8,17 @@ comments. The phases refer to
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-20
+
+### Added
+- PyPI publishing via OIDC Trusted Publishing. The distribution is named
+  `brainbrew-llm` (the bare name `brainbrew` is unavailable on PyPI); `pip
+  install brainbrew-llm` still provides the `brainbrew` command.
+
+### Security
+- aiohttp raised to 3.14.5 (CVE-2026-111063, CVE-2026-111064,
+  GHSA-2g87-pp6c-29x5).
+
 ## [3.0.0] - 2026-10-18: Phase 4, hardening, and audit follow-ups
 
 A major version because two things are removed (see *Removed*): the `vllm` extra
