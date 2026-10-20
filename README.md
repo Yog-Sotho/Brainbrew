@@ -5,6 +5,7 @@
 
   <p>
     <a href="https://github.com/Yog-Sotho/Brainbrew/actions/workflows/ci.yml"><img src="https://github.com/Yog-Sotho/Brainbrew/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://pypi.org/project/brainbrew-llm/"><img src="https://img.shields.io/pypi/v/brainbrew-llm.svg?color=8A2BE2" alt="PyPI: brainbrew-llm"></a>
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
     <img src="https://img.shields.io/badge/Python-3.12%E2%80%933.13-blue.svg" alt="Python 3.12–3.13">
     <img src="https://img.shields.io/badge/Docker-Ready-blue.svg" alt="Docker Ready">
