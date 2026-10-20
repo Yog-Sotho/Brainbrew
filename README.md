@@ -137,7 +137,9 @@ uv run brainbrew runs show &lt;run-id&gt;                # the full manifest</co
 <pre><code># Brainbrew + a local vLLM model server, no API key needed (NVIDIA GPU + Container Toolkit)
 docker compose up -d                                   # model: VLLM_MODEL (default Qwen/Qwen3-4B-Instruct-2507)
 
-# CPU image: OpenAI or any OpenAI-compatible endpoint, ~1.2 GB
+# CPU image: OpenAI or any OpenAI-compatible endpoint, ~1.2 GB. Pull the published one
+# (linux/amd64 + linux/arm64, from the next release on) or build it yourself:
+docker pull ghcr.io/yog-sotho/brainbrew && docker tag ghcr.io/yog-sotho/brainbrew brainbrew-api
 docker build --target api -t brainbrew-api .
 docker run -p 127.0.0.1:8501:8501 --env-file .env brainbrew-api
 

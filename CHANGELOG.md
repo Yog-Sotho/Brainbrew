@@ -8,6 +8,13 @@ comments. The phases refer to
 
 ## [Unreleased]
 
+### Added
+- Container image `ghcr.io/yog-sotho/brainbrew:{version,latest}` for `linux/amd64`
+  and `linux/arm64`, published by the release workflow: the CPU (`api`) target,
+  signed with Sigstore (keyless) and with build provenance. A `Docker` workflow
+  builds and smoke-tests the arm64 image for pull requests that change it (ci.yml
+  already covers amd64).
+
 ## [3.0.1] - 2026-10-20
 
 ### Added

@@ -10,6 +10,17 @@
 vLLM is not installed in either image. For a local model server, `compose.yaml`
 runs the official vLLM image next to the app (below).
 
+Each release also publishes the CPU image, signed with Sigstore (keyless) and with
+build provenance, for `linux/amd64` and `linux/arm64`:
+
+```bash
+docker pull ghcr.io/yog-sotho/brainbrew          # or :<version>
+docker run -p 127.0.0.1:8501:8501 --env-file .env -v brainbrew-runs:/app/runs ghcr.io/yog-sotho/brainbrew
+```
+
+The GPU image is not published (its CUDA torch stack is too large for the hosted
+build runners); build it with the command above.
+
 Images run as a non-root user (uid 10001), log JSON lines, and never contain
 `.env` or `.streamlit/secrets.toml` (`.dockerignore` is an allow-list).
 
