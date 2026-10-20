@@ -8,6 +8,8 @@ comments. The phases refer to
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-10-20
+
 ### Added
 - Container image `ghcr.io/yog-sotho/brainbrew:{version,latest}` for `linux/amd64`
   and `linux/arm64`, published by the release workflow: the CPU (`api`) target,
