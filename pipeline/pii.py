@@ -278,7 +278,7 @@ def _presidio_engine() -> Any:
     except ImportError as exc:
         raise RuntimeError(
             "The Presidio PII backend is not installed. Install it with "
-            "`pip install 'brainbrew[pii]'` and `python -m spacy download en_core_web_lg`."
+            "`pip install 'brainbrew-llm[pii]'` and `python -m spacy download en_core_web_lg`."
         ) from exc
     model = _spacy_model()
     if model is None:
