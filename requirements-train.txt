@@ -4,7 +4,7 @@ accelerate==1.15.0 \
     --hash=sha256:5654f8c5eaa0d4fa68b33e287a97765da6849bf6d51dcac874e73fbbddfb6134 \
     --hash=sha256:97eacca0b73e45cb867dbf8c5d5d4dc32219544300e0c8992c7334dc2ef33cec
     # via
-    #   brainbrew
+    #   brainbrew-llm
     #   peft
     #   trl
 aiohappyeyeballs==2.7.1 \
@@ -96,7 +96,7 @@ authlib==1.8.0 \
 bitsandbytes==0.50.2 ; sys_platform == 'linux' \
     --hash=sha256:55348a9a4a21bfd99cf8c7b32fe67b4030ae5c2a05738e03c1747f65fa6ec283 \
     --hash=sha256:d5772560dd94c4d9c57f50c9b017450a1707f7687bfd4b3dc86f7342aafe721e
-    # via brainbrew
+    # via brainbrew-llm
 certifi==2026.7.22 \
     --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
     --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
@@ -266,7 +266,7 @@ datasets==5.1.0 \
     --hash=sha256:1561347daa8841b51351ef2ad1647b4ee4af406852c0f7bd1df587ac1ca7888e \
     --hash=sha256:86fd08b280485aab82894d2c81842c4151d93b575efea0054315104cb7bc3cec
     # via
-    #   brainbrew
+    #   brainbrew-llm
     #   trl
 dill==0.4.1 \
     --hash=sha256:1e1ce33e978ae97fcfcff5638477032b801c46c7c65cf717f95fbc2248f79a9d \
@@ -411,7 +411,7 @@ huggingface-hub==1.33.0 \
     --hash=sha256:367be21a201db9523eddf8aeac7048f2602c1b308691c97640d5e72ed188007e
     # via
     #   accelerate
-    #   brainbrew
+    #   brainbrew-llm
     #   datasets
     #   peft
     #   tokenizers
@@ -503,7 +503,7 @@ langchain-protocol==0.0.19 \
 langchain-text-splitters==1.1.3 \
     --hash=sha256:50edeb318b3be6a6308dddd7d616ab82823a9ccbea59a9c14c58a7b91df60295 \
     --hash=sha256:929b6c76f99d611a5b1d8f5591ef302909b86a436ceb3217034d24e4757868d8
-    # via brainbrew
+    # via brainbrew-llm
 langsmith==0.14.4 \
     --hash=sha256:a340199fcd2af60358f09dd1d7011bf7282f0d46a98aaa101bc7a521746da764 \
     --hash=sha256:ae0d98c2b0f9292ef7e12451d480937d79a0e7dcf2412ba847de6f053391b44a
@@ -650,7 +650,7 @@ numpy==2.5.3 \
     # via
     #   accelerate
     #   bitsandbytes
-    #   brainbrew
+    #   brainbrew-llm
     #   datasets
     #   pandas
     #   peft
@@ -731,7 +731,7 @@ nvidia-nvtx==13.0.85 ; (platform_machine == 'aarch64' and sys_platform == 'linux
 openai==3.26.0 \
     --hash=sha256:050597ff71ff4025177405a41fa4019d4f9feae5826645b63b8e35b6e9a3c88b \
     --hash=sha256:73b470c09cf2171dce930e36af01c6632241adda0120ad84302ad229f9130a5a
-    # via brainbrew
+    # via brainbrew-llm
 orjson==3.12.0 ; platform_python_implementation != 'PyPy' \
     --hash=sha256:010811c1b69773450a01cef97727a67b223242f350b77d4ca000e59a9ef2155a \
     --hash=sha256:1192a7021b6d071aaf909864f6e924d6a2675ca360485b972b8401749311750b \
@@ -797,11 +797,11 @@ pandas==3.0.6 \
 pdfminer-six==20260107 \
     --hash=sha256:366585ba97e80dffa8f00cebe303d2f381884d8637af4ce422f1df3ef38111a9 \
     --hash=sha256:96bfd431e3577a55a0efd25676968ca4ce8fd5b53f14565f85716ff363889602
-    # via brainbrew
+    # via brainbrew-llm
 peft==0.21.2 \
     --hash=sha256:106ab6077ff72c54d21577f9af5970e34bac7582cb14209f7b2b511e322a4eae \
     --hash=sha256:b803ccfb3f3f316004d850284306687833a2235ea278fb56abc856203456142e
-    # via brainbrew
+    # via brainbrew-llm
 pillow==12.3.0 \
     --hash=sha256:0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3 \
     --hash=sha256:0dd2064cbc55aaec028ef5fbb60fa47bb6c3e7918e07ff17935284b227a9d2df \
@@ -922,7 +922,7 @@ pydantic==2.13.5 \
     --hash=sha256:346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73 \
     --hash=sha256:51a9c5f7b2f8e636f04c6cada605d9b6a3bf1348fdf945a3d8869b19bba0ee08
     # via
-    #   brainbrew
+    #   brainbrew-llm
     #   langchain-core
     #   langsmith
     #   openai
@@ -978,7 +978,7 @@ python-dateutil==2.9.0.post0 \
 python-dotenv==1.2.4 \
     --hash=sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc \
     --hash=sha256:f0d53e69935a851c0dcc78f3ab7aaccd8cabef0b92382b576b824212902873c0
-    # via brainbrew
+    # via brainbrew-llm
 python-multipart==0.0.32 \
     --hash=sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e \
     --hash=sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23
@@ -1007,7 +1007,7 @@ pyyaml==6.0.3 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
     # via
     #   accelerate
-    #   brainbrew
+    #   brainbrew-llm
     #   datasets
     #   huggingface-hub
     #   langchain-core
@@ -1163,11 +1163,11 @@ starlette==1.7.0 \
 streamlit==1.65.0 \
     --hash=sha256:42acd9ebdf3576a35584977c48a044ec0b5d3e4997fa9248809b9891598ac6a0 \
     --hash=sha256:517a7254e223f4986d2b2e0745d02acf8ca64656943e63e422d345ce34a7495b
-    # via brainbrew
+    # via brainbrew-llm
 structlog==26.1.0 \
     --hash=sha256:e081a26d6c373e6d201eca24eede26d8ffab07f88f477822e679183428d3d91e \
     --hash=sha256:f63a716cbd1b1291cf7661de7794b455acfa4c43c5bcf1630e6ad5ddc1adb3b7
-    # via brainbrew
+    # via brainbrew-llm
 sympy==1.14.0 \
     --hash=sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517 \
     --hash=sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5
@@ -1176,7 +1176,7 @@ tenacity==9.2.1 \
     --hash=sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e \
     --hash=sha256:a606b5c808d0cded4a359d5b9932d867ff2a6a6b64d37350260fd01bbdf83839
     # via
-    #   brainbrew
+    #   brainbrew-llm
     #   langchain-core
 tokenizers==0.23.2 \
     --hash=sha256:12f0835dc2ee694746a76adf7b1567d4346a4a502ebe93fb1f5f80ea49799b78 \
@@ -1213,7 +1213,7 @@ torch==2.14.1 \
     # via
     #   accelerate
     #   bitsandbytes
-    #   brainbrew
+    #   brainbrew-llm
     #   peft
 tqdm==4.70.1 \
     --hash=sha256:c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73 \
@@ -1227,7 +1227,7 @@ transformers==5.19.0 \
     --hash=sha256:87f38dd25e4521151b97e94520ac457f44a0ae8a8358a5b112daff6c64a822d6 \
     --hash=sha256:afcd2dd5f603ed28c1e1fcb00a338ccbb4ef5f878ed289635df8b58187afb518
     # via
-    #   brainbrew
+    #   brainbrew-llm
     #   peft
     #   trl
 triton==3.8.0 ; sys_platform == 'linux' \
@@ -1239,7 +1239,7 @@ triton==3.8.0 ; sys_platform == 'linux' \
 trl==1.14.2 \
     --hash=sha256:0e6630587c5da50d5574b9fcbaa55540304e7c9aee60763c034f5d2c9e3b5b4d \
     --hash=sha256:bd97adb0284f2520ae8c5ebf243e2e4b3cbe50f09cb5964547e38dfc1d37694e
-    # via brainbrew
+    # via brainbrew-llm
 truststore==0.10.4 ; sys_platform != 'emscripten' \
     --hash=sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301 \
     --hash=sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981
@@ -1250,7 +1250,7 @@ typer==0.27.3 \
     --hash=sha256:d0396f770a560ab1b0a8504e13b5f254b728cedb05c61cf0359e944e50ce8901 \
     --hash=sha256:e50022f28b82a86313e54501317a1db64bf8f8d036ff8cfe5ca7e47675454aff
     # via
-    #   brainbrew
+    #   brainbrew-llm
     #   transformers
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
@@ -1441,7 +1441,7 @@ xxhash==4.0.1 \
     --hash=sha256:f5d031f35962e5483a613214e61f09fe24ab523062c3646d592dc16c4a217451 \
     --hash=sha256:ff48915bf1871a1f19f74c11834c6329443d306cedc0c05fe7fe617810422a80
     # via
-    #   brainbrew
+    #   brainbrew-llm
     #   datasets
     #   langsmith
 yarl==1.25.1 \

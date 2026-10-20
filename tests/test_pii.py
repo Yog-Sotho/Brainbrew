@@ -209,7 +209,7 @@ class TestPresidio:
         monkeypatch.setitem(sys.modules, "presidio_analyzer", None)
         pii._presidio_engine.cache_clear()
         assert not pii.presidio_available()
-        with pytest.raises(RuntimeError, match=r"brainbrew\[pii\]"):
+        with pytest.raises(RuntimeError, match=r"brainbrew-llm\[pii\]"):
             redact_pii("Ada Lovelace", presidio=True)
         pii._presidio_engine.cache_clear()
 

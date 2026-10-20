@@ -294,7 +294,7 @@ wheels = [
 ]
 
 [[package]]
-name = "brainbrew"
+name = "brainbrew-llm"
 version = "3.0.0"
 source = { editable = "." }
 dependencies = [
