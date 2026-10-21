@@ -46,7 +46,7 @@ jobs:
         run: |
           mkdir -p pypi-dist
           cp dist/*.whl dist/*.tar.gz pypi-dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pypi-dist
           path: pypi-dist/
@@ -89,7 +89,7 @@ jobs:
     permissions:
       id-token: write       # Trusted Publishing; also uploads PEP 740 attestations
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pypi-dist
           path: dist/
