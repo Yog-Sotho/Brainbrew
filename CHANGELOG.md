@@ -13,6 +13,8 @@ comments. The phases refer to
   and `docker` (Trivy) CI jobs red: pillow 13.0.0 (39 advisories, several critical; needs
   streamlit 1.66.1, as 1.65 caps pillow below 13), authlib 1.9.1, certifi 2026.10.23,
   filelock 4.2.4, joserfc 1.7.7 and, for the `train` extra, setuptools 84.2.1.
+- The CPU image's `python:3.12-slim-bookworm` base is re-pinned to a digest with the fixed
+  OpenSSL (3.0.22-1~deb12u2, CVE-2026-84782).
 
 ## [3.0.2] - 2026-10-20
 
